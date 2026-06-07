@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-06-07
+
+v1.x 维护线首个稳定版，从 v1.0.10 切出独立维护分支 `release/1.x`。
+
+### 变更
+
+- 从 `release/1.x` 分支独立维护，与 main 分支（v2.x 开发）隔离
+
 ## [1.0.10] - 2026-06-06
 
 ### 变更
