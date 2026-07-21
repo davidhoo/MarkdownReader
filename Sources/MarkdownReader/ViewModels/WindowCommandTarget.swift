@@ -90,7 +90,15 @@ enum ZoomCommand: Sendable {
 
 // MARK: - FocusedValues
 
+/// 兼容 Command Line Tools 工具链：不依赖 SwiftUI `@Entry` 宏（CLTs 缺少 SwiftUIMacros 插件）。
+private struct WindowCommandTargetKey: FocusedValueKey {
+    typealias Value = WindowCommandTarget
+}
+
 extension FocusedValues {
     /// 焦点窗口的命令目标。菜单命令读取此值并转发。
-    @Entry var windowCommandTarget: WindowCommandTarget?
+    var windowCommandTarget: WindowCommandTarget? {
+        get { self[WindowCommandTargetKey.self] }
+        set { self[WindowCommandTargetKey.self] = newValue }
+    }
 }
