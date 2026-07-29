@@ -70,6 +70,9 @@ struct DetailView: View {
     /// 导出用的 WebPage 引用
     @State private var exportedPage: WebPage?
 
+    /// 编辑模式右侧实时预览的内容（防抖更新，避免每次击键都全量渲染）
+    @State private var previewContent: String = ""
+
 
     var body: some View {
         VStack(spacing: 0) {
@@ -225,6 +228,19 @@ struct DetailView: View {
             }
             // 操作按钮组与大纲图标下对齐，横向间隔一致
             HStack(alignment: .bottom, spacing: 8) {
+                // 分栏预览切换（仅编辑模式且非纯文本时显示）
+                if documentViewModel.hasDocument && documentViewModel.displayMode == .raw && !documentViewModel.isPlainTextMode {
+                    Button {
+                        appViewModel.toggleSplitPreview()
+                    } label: {
+                        Image(systemName: "rectangle.split.2x1")
+                            .font(.system(size: 14))
+                            .foregroundStyle(appViewModel.isSplitPreviewEnabled ? themeColors.accent : themeColors.fgMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .help(L10n.tr(.titleBarToggleSplitPreview, language: language))
+                }
+
                 // 刷新按钮（文件被外部修改时显示，在保存按钮左侧）
                 if documentViewModel.hasDocument && documentViewModel.isFileModifiedExternally {
                     Button {
@@ -570,72 +586,65 @@ struct DetailView: View {
 
     @ViewBuilder
     private var documentContentView: some View {
-        ZStack {
-            // Raw 模式视图 — 始终保持存活，避免 NSTextView 被销毁导致 undo 历史丢失
-            RawMarkdownView(
-                content: Binding(
-                    get: { documentViewModel.content },
-                    set: { documentViewModel.content = $0 }
-                ),
-                fontSize: settings.sourceFontPointSize,
-                contentPadding: settings.contentPaddingPoints,
-                scrollToLine: documentViewModel.scrollToLineRequest,
-                fileURL: documentViewModel.currentFileURL,
-                isActive: documentViewModel.displayMode == .raw,
-                isFindBarVisible: appViewModel.isFindBarVisible,
-                searchRef: textViewSearchRef,
-                onCursorLineNumberChanged: { lineNumber in
-                    documentViewModel.cursorLineNumber = lineNumber
-                },
-                contentVersion: documentViewModel.contentVersion,
-                undoStore: undoStore
-            )
-            .opacity(documentViewModel.displayMode == .raw ? 1 : 0)
-            .allowsHitTesting(documentViewModel.displayMode == .raw)
-            .onChange(of: documentViewModel.scrollToLineRequest) { _, newValue in
-                if newValue != nil {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        documentViewModel.clearScrollRequest()
-                    }
-                }
-            }
-
-            // 渲染模式视图 — 仅在渲染模式下显示
-            if documentViewModel.displayMode == .rendered {
-                WebViewMarkdownView(
-                    content: documentViewModel.content,
-                    fileURL: documentViewModel.currentFileURL,
+        HStack(spacing: 0) {
+            ZStack {
+                // Raw 模式视图 — 始终保持存活，避免 NSTextView 被销毁导致 undo 历史丢失
+                RawMarkdownView(
+                    content: Binding(
+                        get: { documentViewModel.content },
+                        set: { documentViewModel.content = $0 }
+                    ),
+                    fontSize: settings.sourceFontPointSize,
                     contentPadding: settings.contentPaddingPoints,
-                    maxContentWidthFollowsWindow: settings.maxContentWidthFollowsWindow,
                     scrollToLine: documentViewModel.scrollToLineRequest,
-                    themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
-                    isDark: settings.resolvedThemeType == .dark,
-                    searchQuery: findReplaceViewModel.searchText,
-                    searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
-                    searchWholeWord: findReplaceViewModel.isWholeWord,
-                    searchCurrentIndex: findReplaceViewModel.currentMatchIndex,
+                    fileURL: documentViewModel.currentFileURL,
+                    isActive: documentViewModel.displayMode == .raw,
                     isFindBarVisible: appViewModel.isFindBarVisible,
+                    searchRef: textViewSearchRef,
+                    onCursorLineNumberChanged: { lineNumber in
+                        documentViewModel.cursorLineNumber = lineNumber
+                    },
                     contentVersion: documentViewModel.contentVersion,
-                    onVisibleHeadingChanged: { heading in
-                        activeOutlineLineNumber = heading?.lineNumber
-                    },
-                    onVisibleLineChanged: { lineNumber in
-                        documentViewModel.renderedVisibleLineNumber = lineNumber
-                    },
-                    commandTarget: commandTarget,
-                    onOpenLinkedMarkdownFile: { [weak session] url in
-                        session?.handleLinkedMarkdownFile(url.standardizedFileURL)
-                    },
-                    exportedPage: $exportedPage
+                    undoStore: undoStore
                 )
+                .opacity(documentViewModel.displayMode == .raw ? 1 : 0)
+                .allowsHitTesting(documentViewModel.displayMode == .raw)
                 .onChange(of: documentViewModel.scrollToLineRequest) { _, newValue in
                     if newValue != nil {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                             documentViewModel.clearScrollRequest()
                         }
                     }
                 }
+
+                // 渲染模式视图 — 仅在渲染模式下显示（渲染模式布局保持不变）
+                if documentViewModel.displayMode == .rendered {
+                    webMarkdownView(content: documentViewModel.content)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // 编辑模式：右侧实时渲染预览（默认关闭，经标题栏按钮开启；纯文本模式不支持）
+            if documentViewModel.displayMode == .raw && !documentViewModel.isPlainTextMode && appViewModel.isSplitPreviewEnabled {
+                Rectangle().fill(themeColors.border).frame(width: 1)
+
+                webMarkdownView(content: previewContent)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .onAppear { previewContent = documentViewModel.content }
+        .onChange(of: documentViewModel.displayMode) { _, mode in
+            // 进入编辑模式时立即同步一次，避免右栏短暂空白
+            if mode == .raw { previewContent = documentViewModel.content }
+        }
+        .onChange(of: documentViewModel.currentFileURL) { _, _ in
+            previewContent = documentViewModel.content
+        }
+        .task(id: documentViewModel.content) {
+            // 击键防抖：停顿 200ms 无新输入后再刷新右侧预览
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            previewContent = documentViewModel.content
         }
         .overlay(alignment: .topTrailing) {
             if appViewModel.isFindBarVisible, documentViewModel.hasDocument {
@@ -658,6 +667,44 @@ struct DetailView: View {
         .onChange(of: findReplaceViewModel.isCaseSensitive) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isWholeWord) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isRegularExpression) { _, _ in performSearch() }
+    }
+
+    /// 渲染视图（渲染模式全宽显示 / 编辑模式右栏实时预览共用）
+    @ViewBuilder
+    private func webMarkdownView(content: String) -> some View {
+        WebViewMarkdownView(
+            content: content,
+            fileURL: documentViewModel.currentFileURL,
+            contentPadding: settings.contentPaddingPoints,
+            maxContentWidthFollowsWindow: settings.maxContentWidthFollowsWindow,
+            scrollToLine: documentViewModel.scrollToLineRequest,
+            themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
+            isDark: settings.resolvedThemeType == .dark,
+            searchQuery: findReplaceViewModel.searchText,
+            searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
+            searchWholeWord: findReplaceViewModel.isWholeWord,
+            searchCurrentIndex: findReplaceViewModel.currentMatchIndex,
+            isFindBarVisible: appViewModel.isFindBarVisible,
+            contentVersion: documentViewModel.contentVersion,
+            onVisibleHeadingChanged: { heading in
+                activeOutlineLineNumber = heading?.lineNumber
+            },
+            onVisibleLineChanged: { lineNumber in
+                documentViewModel.renderedVisibleLineNumber = lineNumber
+            },
+            commandTarget: commandTarget,
+            onOpenLinkedMarkdownFile: { [weak session] url in
+                session?.handleLinkedMarkdownFile(url.standardizedFileURL)
+            },
+            exportedPage: $exportedPage
+        )
+        .onChange(of: documentViewModel.scrollToLineRequest) { _, newValue in
+            if newValue != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    documentViewModel.clearScrollRequest()
+                }
+            }
+        }
     }
 
     /// 把 find/reload/exportPDF handler 注册到注入的本窗口命令目标上。

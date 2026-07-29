@@ -55,6 +55,9 @@ final class AppViewModel {
     /// 大纲侧边栏是否可见
     var isOutlineVisible: Bool = false
 
+    /// 编辑模式是否启用左右分栏实时预览（默认关闭，由标题栏按钮切换）
+    var isSplitPreviewEnabled: Bool = false
+
     /// 大纲侧边栏宽度
     var outlineWidth: CGFloat = 200
 
@@ -120,6 +123,13 @@ final class AppViewModel {
             if isOutlineVisible {
                 outlineWidth = Self.defaultOutlineWidth
             }
+        }
+    }
+
+    /// 切换编辑模式分栏预览
+    func toggleSplitPreview() {
+        withAnimation(.spring(duration: 0.25)) {
+            isSplitPreviewEnabled.toggle()
         }
     }
 

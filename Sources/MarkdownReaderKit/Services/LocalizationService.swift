@@ -148,6 +148,7 @@ public enum L10n {
         case titleBarSave
         case titleBarReload
         case titleBarToggleOutline
+        case titleBarToggleSplitPreview
         case titleBarCopyPath
         case titleBarPathCopied
 
@@ -365,6 +366,7 @@ public enum L10n {
         .titleBarSave: "Save (⌘S)",
         .titleBarReload: "Reload",
         .titleBarToggleOutline: "Toggle Outline",
+        .titleBarToggleSplitPreview: "Toggle Split Preview",
         .titleBarCopyPath: "Copy Path",
         .titleBarPathCopied: "Path Copied",
         .fileModifiedExternallyTitle: "File Modified Externally",
@@ -559,6 +561,7 @@ public enum L10n {
         .titleBarSave: "保存 (⌘S)",
         .titleBarReload: "重新加载",
         .titleBarToggleOutline: "切换大纲",
+        .titleBarToggleSplitPreview: "切换分栏预览",
         .titleBarCopyPath: "复制路径",
         .titleBarPathCopied: "路径已复制",
         .fileModifiedExternallyTitle: "文件已被外部修改",
@@ -753,6 +756,7 @@ public enum L10n {
         .titleBarSave: "儲存 (⌘S)",
         .titleBarReload: "重新載入",
         .titleBarToggleOutline: "切換大綱",
+        .titleBarToggleSplitPreview: "切換分欄預覽",
         .titleBarCopyPath: "複製路徑",
         .titleBarPathCopied: "路徑已複製",
         .fileModifiedExternallyTitle: "檔案已被外部修改",
