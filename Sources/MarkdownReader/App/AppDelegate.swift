@@ -51,6 +51,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         didFinishLaunching = true
         logger.info("applicationDidFinishLaunching")
 
+        // 标准一级菜单由 SwiftUI/AppKit 创建，不读取应用自定义 L10n 设置。
+        // 在应用生命周期层启动同步器，使冷启动和后续 Commands 重建都保持当前语言。
+        MainMenuLocalizationService.start(
+            language: SettingsModel.shared.languagePref.resolvedLanguage
+        )
+
         // 注册窗口拖拽：Task 11 起由 WindowLifecycleBridge 在每窗口挂载时安装
         // 窗口级 WindowDropOverlayView，不再由 AppDelegate 全局安装。
 
