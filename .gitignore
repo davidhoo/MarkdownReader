@@ -44,6 +44,9 @@ Carthage/Build/
 # Claude Code
 .claude/
 
+# Local Git worktrees
+.worktrees/
+
 # Build artifacts
 docs/plan.html
 scripts/.seticon-bin
