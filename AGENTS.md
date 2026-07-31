@@ -6,7 +6,7 @@
 
 MarkdownReader 是一个原生 macOS Markdown 阅读器应用。不是编辑器，只是一个安静的阅读器。三栏布局：左侧目录树 + 中间渲染视图 + 右侧大纲导航。
 
-- **当前版本**: 2.2.1
+- **当前版本**: 2.2.2
 - **最低部署**: macOS 26.0
 - **Bundle ID**: `com.markdownreader.app`
 - **许可证**: MIT
