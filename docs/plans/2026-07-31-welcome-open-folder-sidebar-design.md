@@ -8,7 +8,9 @@
 
 `WelcomeView → WindowCommandTarget → WindowSession.openFromPanel → WindowCoordinator → WindowSession.openDirectory`
 
-因此入口路由上的回归无法被现有测试发现。
+补充复现后确认：目录已经成功打开，`rootDirectory` 和 `isSidebarVisible` 也都正确；
+第一次 `Cmd+\` 会关闭 Sidebar 并显示顶部切换按钮，第二次再打开才出现目录树。
+这说明问题位于 SwiftUI 首次布局，而不是打开路由或状态模型。
 
 ## 目标行为
 
@@ -27,9 +29,12 @@
 
 可以只处理这个入口，但会让路由层承担视图状态职责，也会造成不同打开来源的行为分叉。
 
-### 方案 C：在窗口会话的目录打开边界统一保证 Sidebar 可见
+### 方案 C：根目录上下文变化时重建 Sidebar 子树
 
-所有成功进入目录模式的入口共享相同不变量；欢迎页只负责发起打开请求，Coordinator 只负责路由。配合完整入口回归测试，可以防止同类问题再次出现。
+`SidebarView` 为规避 AppKit hit-testing 问题始终保留在视图树中，并用 0 宽度隐藏。
+从欢迎页切到目录模式时，SwiftUI 偶尔保留旧的 0 宽度布局。用根目录路径作为
+Sidebar 的视图身份，只在欢迎页/根目录上下文变化时重建子树；自动进入目录模式
+同步设置可见宽度，避免 OpenPanel sheet 结束期间的动画停在起点。普通 `Cmd+\` 显隐仍复用原视图并保留动画。
 
 采用方案 C。
 
@@ -38,16 +43,18 @@
 1. 欢迎页通过当前窗口的 `WindowCommandTarget` 打开面板。
 2. 用户选择资源后，`WindowSession` 以当前窗口 ID 为 preferred window 提交请求。
 3. Coordinator 将目录路由回当前空白 session。
-4. `WindowSession.openDirectory` 在加载目录树前同步建立目录模式并确保 Sidebar 可见。
-5. 目录树异步加载完成，当前窗口保持展开的 Sidebar。
+4. `AppViewModel.openDirectory` 更新根目录并同步设置 Sidebar 可见，不启动宽度动画。
+5. 根目录身份变化使 SwiftUI 重建 Sidebar 子树，清除欢迎页遗留的 0 宽度布局。
+6. 目录树异步加载完成，当前窗口保持展开的 Sidebar。
 
 ## 测试
 
-新增入口级回归测试，模拟 `.openPanel` 请求复用当前空白 session，并等待 Coordinator 发起的主线程任务完成。断言：
+新增目录上下文身份测试和真实 `NSHostingView` 布局测试，断言：
 
-- 请求由当前 session 接收；
-- `rootDirectory` 更新为所选目录；
-- `isSidebarVisible` 为 `true`；
-- 目录树完成加载。
+- 欢迎页进入目录时 Sidebar 身份变化；
+- 重复打开同一目录时身份稳定；
+- 切换根目录时身份再次变化。
+- 欢迎页的 Sidebar 实际宽度为 0，打开目录后重建且宽度不小于最小值；
+- 普通 `Cmd+\` 隐藏/显示复用同一 AppKit 子树。
 
 先运行测试确认它能复现失败，再做单点修复；随后运行相关测试、全量测试和构建。

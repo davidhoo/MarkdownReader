@@ -209,6 +209,27 @@ struct SidebarView: View {
     }
 }
 
+/// Sidebar 实际布局的 AppKit 锚点。
+///
+/// 探针不参与交互或状态管理；其 NSView 跟随 Sidebar 子树生命周期和几何尺寸，
+/// 让回归测试能验证根目录变化确实触发重建，而普通显隐仍复用同一子树。
+struct SidebarLayoutProbe: NSViewRepresentable {
+    static let viewIdentifier = NSUserInterfaceItemIdentifier("markdownreader.sidebar-layout-probe")
+
+    func makeNSView(context: Context) -> NSView {
+        let view = SidebarLayoutProbeView()
+        view.identifier = Self.viewIdentifier
+        view.setAccessibilityElement(false)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private final class SidebarLayoutProbeView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 // MARK: - 递归目录节点视图
 
 /// 支持展开/折叠绑定的递归目录节点视图

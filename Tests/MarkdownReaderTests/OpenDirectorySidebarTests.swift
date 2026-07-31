@@ -1,4 +1,6 @@
 import XCTest
+import SwiftUI
+import AppKit
 @testable import MarkdownReader
 
 /// 打开目录时自动展开 Sidebar 的回归测试（需求：目录模式必须保证目录树可见）。
@@ -159,5 +161,115 @@ final class OpenDirectorySidebarTests: TemporaryDirectoryTestCase {
         XCTAssertTrue(session.appViewModel.isSidebarVisible, "session 打开目录后 Sidebar 必须可见")
         XCTAssertEqual(session.appViewModel.rootDirectory, dir)
         XCTAssertFalse(session.fileTreeViewModel.nodes.isEmpty, "目录树应已加载")
+    }
+
+    // MARK: - 欢迎页切换到目录时重建 Sidebar 布局
+
+    func testSidebarPresentationIdentityChangesWhenDirectoryContextChanges() throws {
+        let vm = makeAppViewModel()
+        let welcomeIdentity = vm.sidebarPresentationIdentity
+        let dirA = try makeDirectory(named: "a")
+        let dirB = try makeDirectory(named: "b")
+
+        vm.openDirectory(dirA)
+        let directoryAIdentity = vm.sidebarPresentationIdentity
+
+        XCTAssertNotEqual(
+            directoryAIdentity,
+            welcomeIdentity,
+            "从欢迎页进入目录模式时必须更新 Sidebar 身份，强制 SwiftUI 重新建立非零宽度布局"
+        )
+
+        vm.openDirectory(dirA)
+        XCTAssertEqual(
+            vm.sidebarPresentationIdentity,
+            directoryAIdentity,
+            "重复打开同一目录不应无谓重建 Sidebar"
+        )
+
+        vm.openDirectory(dirB)
+        XCTAssertNotEqual(
+            vm.sidebarPresentationIdentity,
+            directoryAIdentity,
+            "切换根目录时应为 Sidebar 建立新的目录上下文"
+        )
+    }
+
+    func testWelcomeToDirectoryRebuildsSidebarButVisibilityToggleReusesIt() throws {
+        let coordinator = WindowCoordinator()
+        let session = WindowSession(id: WindowID(), coordinator: coordinator)
+        coordinator.register(session: session)
+
+        let hostingView = NSHostingView(rootView: ContentView(session: session))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+        window.contentView = hostingView
+        hostingView.frame = window.contentView?.bounds ?? .zero
+        window.orderFrontRegardless()
+        window.makeKey()
+        settleLayout(hostingView)
+
+        let welcomeProbe = try XCTUnwrap(findSidebarProbe(in: hostingView))
+        XCTAssertEqual(welcomeProbe.frame.width, 0, accuracy: 1)
+
+        let dir = try makeDirectory(named: "docs")
+        session.appViewModel.openDirectory(dir)
+        settleLayout(hostingView)
+
+        let directoryProbe = try XCTUnwrap(findSidebarProbe(in: hostingView))
+        XCTAssertFalse(
+            welcomeProbe === directoryProbe,
+            "欢迎页进入目录模式必须重建 Sidebar 子树，清除遗留的 0 宽度布局"
+        )
+        XCTAssertGreaterThanOrEqual(
+            directoryProbe.frame.width,
+            AppViewModel.minSidebarWidth,
+            "目录打开后 Sidebar 的实际 AppKit 布局宽度必须非零"
+        )
+
+        session.appViewModel.toggleSidebar()
+        settleLayout(hostingView)
+        let hiddenProbe = try XCTUnwrap(findSidebarProbe(in: hostingView))
+        XCTAssertTrue(directoryProbe === hiddenProbe, "普通隐藏不得销毁 Sidebar 子树")
+
+        session.appViewModel.toggleSidebar()
+        settleLayout(hostingView)
+        let shownProbe = try XCTUnwrap(findSidebarProbe(in: hostingView))
+        XCTAssertTrue(directoryProbe === shownProbe, "普通重新显示应复用 Sidebar 子树")
+        XCTAssertGreaterThanOrEqual(shownProbe.frame.width, AppViewModel.minSidebarWidth)
+
+    }
+
+    private func settleLayout(_ view: NSView) {
+        let deadline = Date().addingTimeInterval(0.5)
+        repeat {
+            view.needsLayout = true
+            view.window?.contentView?.layoutSubtreeIfNeeded()
+            view.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+    }
+
+    private func findSidebarProbe(in view: NSView) -> NSView? {
+        findSidebarProbes(in: view).max { $0.frame.width < $1.frame.width }
+    }
+
+    private func findSidebarProbes(in view: NSView) -> [NSView] {
+        var probes: [NSView] = []
+        if view.identifier == SidebarLayoutProbe.viewIdentifier {
+            probes.append(view)
+        }
+        for subview in view.subviews {
+            probes.append(contentsOf: findSidebarProbes(in: subview))
+        }
+        return probes
     }
 }

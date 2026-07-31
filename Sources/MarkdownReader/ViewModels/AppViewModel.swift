@@ -35,6 +35,15 @@ final class AppViewModel {
     /// Sidebar 是否可见（首次启动默认隐藏）
     var isSidebarVisible: Bool = false
 
+    /// Sidebar 所属的目录上下文。
+    ///
+    /// `SidebarView` 为规避 AppKit hit-testing 问题会一直保留在视图树中，并以 0 宽度隐藏。
+    /// 从欢迎页首次进入目录模式时，SwiftUI 偶尔会保留这份 0 宽度布局；以根目录作为身份
+    /// 可在目录上下文变化时重建 Sidebar 子树，同时避免普通显隐操作反复销毁视图。
+    var sidebarPresentationIdentity: String {
+        rootDirectory?.standardizedFileURL.path ?? "welcome"
+    }
+
     /// Sidebar 当前宽度
     var sidebarWidth: CGFloat = 240
 
@@ -232,11 +241,12 @@ final class AppViewModel {
         selectedFile = nil
         // 目录模式恢复 Sidebar
         if !isSidebarVisible {
-            withAnimation(.spring(duration: 0.25)) {
-                isSidebarVisible = true
-                if sidebarWidth < Self.minSidebarWidth {
-                    sidebarWidth = Self.defaultSidebarWidth
-                }
+            // OpenPanel 的 sheet 正在结束时启动宽度动画，SwiftUI 偶尔会把 Sidebar
+            // 留在动画起点（0 宽度），直到用户手动显隐两次才重新布局。
+            // 自动进入目录模式需要确定性布局，因此同步显示；用户主动 Cmd+\ 仍使用动画。
+            isSidebarVisible = true
+            if sidebarWidth < Self.minSidebarWidth {
+                sidebarWidth = Self.defaultSidebarWidth
             }
         }
     }
