@@ -260,6 +260,28 @@ final class OpenRequestRoutingTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(items[1].url, present)
         XCTAssertEqual(items[2].url, missing)
     }
+
+    // MARK: - 冷启动复用空白窗口必须激活
+
+    /// 冷启动双击 .md 时，默认空白窗口走 `.openInSession`。
+    /// 此前只加载文档不 activate，导致 macOS 创建的隐藏窗口不会前置，用户看到“打不开”。
+    func testOpenInSessionActivatesBlankWindow() throws {
+        let (coordinator, _) = makeReadyCoordinator()
+        let blankSession = WindowSession(id: WindowID(), coordinator: coordinator)
+        coordinator.register(session: blankSession)
+
+        let url = fileURL("cold-open.md")
+        coordinator.enqueue(OpenRequest(url: url, source: .external))
+
+        XCTAssertEqual(
+            coordinator.lastActiveWindowID,
+            blankSession.id,
+            "openInSession 必须激活复用的空白窗口，避免冷启动文件打开后窗口不可见"
+        )
+        let identity = try identityService.identity(for: url, kind: .file)
+        XCTAssertEqual(coordinator.owner(of: identity), blankSession.id)
+        XCTAssertEqual(coordinator.pendingRequestCount, 0)
+    }
 }
 
 /// 测试辅助：可变引用盒子，让闭包能累积收集值。

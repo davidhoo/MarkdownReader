@@ -88,8 +88,14 @@ struct FindReplaceBar: View {
                         .stroke(viewModel.totalMatchCount == 0 && !viewModel.searchText.isEmpty ? themeColors.danger : themeColors.border, lineWidth: 1)
                 )
                 .focused($isSearchFieldFocused)
-                .onSubmit {
-                    onFindNext()
+                .onKeyPress(.return, phases: .down) { context in
+                    // Enter = 下一个，Shift+Enter = 上一个
+                    if context.modifiers.contains(.shift) {
+                        onFindPrevious()
+                    } else {
+                        onFindNext()
+                    }
+                    return .handled
                 }
 
             if !viewModel.searchText.isEmpty {

@@ -72,7 +72,13 @@ final class SettingsModel {
 
     /// 界面语言偏好
     var languagePref: LanguagePref {
-        didSet { defaults.set(languagePref.rawValue, forKey: Keys.languagePref) }
+        didSet {
+            defaults.set(languagePref.rawValue, forKey: Keys.languagePref)
+            let language = languagePref.resolvedLanguage
+            Task { @MainActor in
+                MainMenuLocalizationService.setLanguage(language)
+            }
+        }
     }
 
     /// 默认显示模式（渲染 / 原文）

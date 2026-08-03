@@ -542,10 +542,13 @@ final class WindowCoordinator {
                     activate(windowID: windowID)
                     continue
                 }
-                // 复用已有窗口：在 session 中打开资源（文件或目录）
+                // 复用已有窗口：在 session 中打开资源（文件或目录）。
+                // 必须同步 activate：冷启动 Finder 双击时，SwiftUI 会创建不可见默认窗口；
+                // 若只加载文档不前置窗口，进程存活但窗口数仍为 0，用户感知为“打不开文件”。
                 if let session = sessions[windowID] {
                     session.markOpenStarted()
                     try? claim(resource, for: windowID)
+                    activate(windowID: windowID)
                     Task { @MainActor in
                         var isDir: ObjCBool = false
                         FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
@@ -556,6 +559,9 @@ final class WindowCoordinator {
                         }
                         session.clearBlankOverride()
                     }
+                } else {
+                    // 仅有测试占位 session（无真实 WindowSession）时，仍需激活以更新 MRU。
+                    activate(windowID: windowID)
                 }
 
             case .createWindow(let newID, let resource):

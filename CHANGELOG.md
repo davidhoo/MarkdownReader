@@ -14,6 +14,30 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.2.3] - 2026-07-31
+
+### 修复
+
+- **欢迎页打开文件夹后 Sidebar 不展开**：从欢迎页点击「打开」并在 OpenPanel 中选择文件夹后，目录能打开、`rootDirectory` 与 `isSidebarVisible` 也正确，但 Sidebar 实际呈现宽度仍为 0，需手动 `Cmd+\` 两次才出现目录树。根因是 SwiftUI 首次布局：`SidebarView` 为规避 AppKit hit-testing 问题始终保留在视图树中并以 0 宽度隐藏，从欢迎页切到目录模式时偶尔保留旧的 0 宽度布局
+  - 新增 `AppViewModel.sidebarPresentationIdentity`：以根目录路径作为 Sidebar 的视图身份，仅在欢迎页/根目录上下文变化时重建子树，普通 `Cmd+\` 显隐仍复用同一子树并保留动画
+  - `AppViewModel.openDirectory` 进入目录模式时同步设置可见宽度（不启动宽度动画），避免 OpenPanel sheet 结束期间的动画停在起点
+  - 新增 `SidebarLayoutProbe`（NSViewRepresentable）作为 AppKit 几何锚点，让回归测试能验证根目录变化确实触发重建
+  - 扩展 `OpenDirectorySidebarTests`：覆盖目录上下文身份变化（欢迎页→目录、重复打开同一目录、切换根目录）与真实 `NSHostingView` 布局测试（欢迎页宽度为 0、打开目录后重建且宽度不小于最小值、普通显隐复用同一 AppKit 子树）
+
+## [2.2.2] - 2026-07-31
+
+### 修复
+
+- **冷启动双击 Markdown 时窗口不前置（打不开文件）**：冷启动时 Finder 双击会先创建一个不可见默认窗口，再走 `.openInSession` 复用路径。此前只加载文档不 `activate`，导致进程存活但可见窗口数为 0，用户感知为“双击打不开文件”
+  - `WindowCoordinator` 在复用已有窗口打开资源时同步 `activate(windowID:)`，覆盖真实 `WindowSession` 与仅测试占位 session 两种情况
+  - `WindowCommandTarget` 将 `@Entry var windowCommandTarget` 改为手写 `FocusedValueKey`，兼容 Command Line Tools 工具链（CLT 缺少 `@Entry` 宏依赖的 SwiftUIMacros 插件）
+  - 新增 `OpenRequestRoutingTests` 覆盖冷启动复用窗口的前置激活路径
+- **查找栏不支持 Shift+Enter 反向查找**：`FindReplaceBar` 将 `.onSubmit` 替换为 `.onKeyPress(.return, phases: .down)`，Enter 查找下一个、Shift+Enter 查找上一个，补齐查找栏内反向遍历匹配
+- **标准一级菜单不跟随应用语言设置**：File / Edit / View / Window / Help 等标准菜单由 SwiftUI/AppKit 创建，不读应用自定义 `L10n`
+  - 主 Bundle 开发语言由 `zh-Hans` 改为 `en`，并通过 `CFBundleLocalizations` 显式声明 `en` / `zh-Hans` / `zh-Hant`，使 macOS 在找不到对应语言 Bundle 本地化时正确回退英文而非简中
+  - 新增 `MainMenuLocalizationService`：识别三种语言下的标准一级菜单标题，在 `AppDelegate` 启动时与应用内语言偏好变化时同步父 `NSMenuItem.title` 与 `submenu.title`，监听 `NSMenu.didAddItem/didChangeItem` 通知以应对 SwiftUI 重建菜单；自定义 `CommandMenu` 与菜单项继续走 `L10n`，不改动本地化架构
+  - 新增 `MenuLocalizationTests` 覆盖三语标题映射、角色识别一致性、`Info.plist` 开发语言与支持语言声明
+
 ## [2.2.1] - 2026-07-15
 
 ### 修复

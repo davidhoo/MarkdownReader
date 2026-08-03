@@ -136,6 +136,9 @@ struct ContentView: View {
                     commandTarget: session.commandTarget
                 )
                 .frame(width: appViewModel.isSidebarVisible ? appViewModel.sidebarWidth : 0)
+                // 几何探针放在 frame 之后，测量的是 Sidebar 实际呈现宽度。
+                .background(SidebarLayoutProbe())
+                .id(appViewModel.sidebarPresentationIdentity)
                 .clipped()
                 .allowsHitTesting(appViewModel.isSidebarVisible)
 
