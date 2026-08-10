@@ -75,6 +75,23 @@ When you don't need writing, collaboration, or fancy features — just want to *
 
 Go to [Releases](https://github.com/davidhoo/MarkdownReader/releases) to download the latest DMG, then drag it to your Applications folder.
 
+### Homebrew (optional)
+
+You can also install MarkdownReader via a self-hosted Homebrew tap:
+
+```bash
+brew tap davidhoo/markdownreader
+brew install --cask markdownreader
+
+# Upgrade (the app self-updates, so add --greedy for Homebrew to pull the new version)
+brew update
+brew upgrade --cask --greedy markdownreader
+```
+
+Homebrew only handles installation and optional upgrades; the existing DMG install and in-app update paths remain available and unaffected.
+
+> **About the unnotarized app**: MarkdownReader is development-signed but **not notarized** (no Apple Developer Program). Regardless of how you install it, if macOS blocks the first launch, Control-click MarkdownReader in Applications, choose **Open**, and confirm; or go to **System Settings > Privacy & Security** and click **Open Anyway**. This repo does not provide commands to bypass Gatekeeper.
+
 ### System Requirements
 
 macOS 26 (Tahoe) or later.

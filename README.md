@@ -75,6 +75,23 @@ Markdown Reader 就是为这个场景而生：
 
 前往 [Releases](https://github.com/davidhoo/MarkdownReader/releases) 下载最新版 DMG，拖入应用程序文件夹即可。
 
+### Homebrew（可选）
+
+也可以通过自建 Tap 用 Homebrew 安装：
+
+```bash
+brew tap davidhoo/markdownreader
+brew install --cask markdownreader
+
+# 升级（因应用自带更新，需加 --greedy 才由 Homebrew 拉取新版）
+brew update
+brew upgrade --cask --greedy markdownreader
+```
+
+Homebrew 只负责安装与可选升级；应用仍保留既有 DMG 直装和应用内更新方式，互不影响。
+
+> **关于未公证应用**：MarkdownReader 是开发者签名但**未公证**（未购买 Apple Developer Program）。无论用哪种方式安装，首次启动若被 macOS 拦截，请在「应用程序」中按住 **Control** 点击 MarkdownReader，选择「**打开**」并在弹窗中确认；或进入「**系统设置 > 隐私与安全性**」，点击「**仍要打开**」。本仓库不提供绕过 Gatekeeper 的命令。
+
 ### 系统要求
 
 macOS 26 (Tahoe) 或更高版本。
