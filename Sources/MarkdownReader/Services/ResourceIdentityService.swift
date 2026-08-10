@@ -57,6 +57,7 @@ struct ResourceIdentityService: Sendable {
         switch kind {
         case .file: return "file"
         case .directory: return "dir"
+        case .workspace: return "ws"
         }
     }
 

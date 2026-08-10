@@ -22,6 +22,24 @@ protocol UnsavedCloseInteraction {
 
     /// 选择 Save As 目标 URL。用户取消返回 nil。
     func chooseSaveAsTarget(for session: WindowSession, suggestedName: String, defaultDirectory: URL?) async -> URL?
+
+    /// 展示「保存工作区 / 不保存 / 取消」提示。
+    func presentUnsavedWorkspacePrompt(for session: WindowSession) -> UnsavedPromptChoice
+
+    /// 选择工作区保存目标 URL。用户取消返回 nil。
+    func chooseWorkspaceSaveTarget(for session: WindowSession, suggestedName: String, defaultDirectory: URL?) async -> URL?
+}
+
+extension UnsavedCloseInteraction {
+    /// 默认实现：保持既有测试 fake 可编译（既有场景不会进入工作区分支）。
+    func presentUnsavedWorkspacePrompt(for session: WindowSession) -> UnsavedPromptChoice {
+        .dontSave
+    }
+
+    /// 默认实现：同上。
+    func chooseWorkspaceSaveTarget(for session: WindowSession, suggestedName: String, defaultDirectory: URL?) async -> URL? {
+        nil
+    }
 }
 
 /// 「保存 / 不保存 / 取消」三选一。

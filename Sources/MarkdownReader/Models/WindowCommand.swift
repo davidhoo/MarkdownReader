@@ -11,6 +11,9 @@ enum WindowCommand: Sendable {
     case openPanel
     case save
     case saveAs
+    case addFolderToWorkspace
+    case saveWorkspace
+    case saveWorkspaceAs
     case exportPDF
     case reloadFile
     case toggleSidebar

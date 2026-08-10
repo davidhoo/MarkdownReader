@@ -25,6 +25,11 @@ enum OpenPanelHelper {
         return types
     }()
 
+    /// 工作区文件的 UTType（未注册时回退按扩展名构造）
+    static var workspaceContentType: UTType? {
+        UTType("com.markdownreader.workspace") ?? UTType(filenameExtension: "mdworkspace")
+    }
+
     /// 显示打开面板（窗口级 sheet），用户选择后返回 URL。
     @MainActor
     static func chooseResource(
@@ -36,7 +41,11 @@ enum OpenPanelHelper {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = L10n.tr(.open, language: language)
-        panel.allowedContentTypes = [.folder] + Self.markdownContentTypes
+        var types: [UTType] = [.folder] + Self.markdownContentTypes
+        if let workspaceType = Self.workspaceContentType {
+            types.append(workspaceType)
+        }
+        panel.allowedContentTypes = types
 
         return await withCheckedContinuation { continuation in
             panel.beginSheetModal(for: window) { response in
@@ -130,6 +139,51 @@ enum OpenPanelHelper {
         panel.prompt = L10n.tr(.save, language: language)
         panel.allowedContentTypes = Self.markdownContentTypes
         panel.allowsOtherFileTypes = true
+        panel.nameFieldStringValue = suggestedName
+        panel.canCreateDirectories = true
+
+        if let dir = defaultDirectory {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue {
+                panel.directoryURL = dir
+            } else if dir.pathExtension.isEmpty == false {
+                panel.directoryURL = dir.deletingLastPathComponent()
+            }
+        }
+
+        if let window {
+            return await withCheckedContinuation { continuation in
+                panel.beginSheetModal(for: window) { response in
+                    if response == .OK, let url = panel.url {
+                        continuation.resume(returning: url)
+                    } else {
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        if panel.runModal() == .OK, let url = panel.url {
+            return url
+        }
+        return nil
+    }
+
+    /// 显示工作区保存面板（仅允许 .mdworkspace）。
+    @MainActor
+    static func showWorkspaceSavePanel(
+        for window: NSWindow? = nil,
+        language: Language,
+        defaultDirectory: URL? = nil,
+        suggestedName: String = "Workspace.mdworkspace"
+    ) async -> URL? {
+        let panel = NSSavePanel()
+        panel.prompt = L10n.tr(.menuSaveWorkspace, language: language)
+        if let workspaceType = Self.workspaceContentType {
+            panel.allowedContentTypes = [workspaceType]
+        }
+        panel.allowsOtherFileTypes = false
         panel.nameFieldStringValue = suggestedName
         panel.canCreateDirectories = true
 

@@ -473,7 +473,14 @@ final class WindowCoordinator {
                 perURL.append(.reject(.resourceMissing(url), url))
                 continue
             }
-            let kind: ResourceIdentity.Kind = isDir.boolValue ? .directory : .file
+            let kind: ResourceIdentity.Kind
+            if isDir.boolValue {
+                kind = .directory
+            } else if WorkspaceDocument.isWorkspaceFile(url) {
+                kind = .workspace
+            } else {
+                kind = .file
+            }
             guard let identity = try? identityService.identity(for: url, kind: kind) else {
                 perURL.append(.reject(.unsupportedType(url), url))
                 continue
@@ -554,6 +561,8 @@ final class WindowCoordinator {
                         FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
                         if isDir.boolValue {
                             await session.openDirectory(url)
+                        } else if WorkspaceDocument.isWorkspaceFile(url) {
+                            await session.openWorkspace(url)
                         } else {
                             await session.openFile(url)
                         }

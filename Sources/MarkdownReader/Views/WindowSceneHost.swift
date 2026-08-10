@@ -53,6 +53,8 @@ struct WindowSceneHost: View {
        session.markOpenStarted()
         if resource.kind == .directory {
             await session.openDirectory(url)
+        } else if resource.kind == .workspace {
+            await session.openWorkspace(url)
         } else {
             await session.openFile(url)
         }

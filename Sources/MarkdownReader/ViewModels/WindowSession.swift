@@ -43,6 +43,16 @@ final class WindowSession {
     /// `OpenPanelHelper.showSavePanel`（runModal 会阻塞主线程）。生产环境为 nil，走真实窗口级 sheet。
     var savePanelChooserForTesting: ((URL?, String) async -> URL?)?
 
+    /// 测试注入：添加文件夹面板选择闭包（headless 环境）。生产环境为 nil。
+    var addFolderPanelChooserForTesting: (() async -> URL?)?
+
+    /// 测试注入：工作区保存面板选择闭包（headless 环境）。生产环境为 nil。
+    var workspaceSavePanelChooserForTesting: ((URL?, String) async -> URL?)?
+
+    /// 测试注入：添加文件夹错误提示闭包（避免 headless 环境弹 NSAlert 阻塞）。
+    /// 生产环境为 nil，走真实弹窗。
+    var addFolderErrorPresenterForTesting: ((L10n.Key) -> Void)?
+
     // MARK: - 窗口级状态
 
     /// 显式空白标记（发现 3：消除派生 isBlank 的竞态窗口）。
@@ -145,6 +155,252 @@ final class WindowSession {
     func openDirectory(_ url: URL) async {
         appViewModel.openDirectory(url)
         await fileTreeViewModel.loadDirectory(url)
+    }
+
+    /// 在本会话内打开工作区文件（.mdworkspace）。
+    ///
+    /// 流程：加载文档 → 过滤缺失目录 → 为全部文件夹声明所有权（best-effort，
+    /// 与外部目录打开同语义，防止另一窗口重复打开同一目录）→ 多根加载并
+    /// 恢复展开状态与选中文件。工作区文件自身的所有权由路由调用点 claim。
+    func openWorkspace(_ url: URL) async {
+        let language = SettingsModel.shared.languagePref.resolvedLanguage
+        let document: WorkspaceDocument
+        do {
+            document = try WorkspaceFileService.load(from: url)
+        } catch {
+            fileTreeViewModel.errorMessage = L10n.tr(.workspaceLoadFailed, language: language)
+            return
+        }
+
+        // 过滤已不存在的目录（容忍移动/删除，不整体失败）
+        var folders: [URL] = []
+        for path in document.folders {
+            let folderURL = URL(fileURLWithPath: path)
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDir),
+               isDir.boolValue {
+                folders.append(folderURL)
+            }
+        }
+        guard !folders.isEmpty else {
+            fileTreeViewModel.errorMessage = L10n.tr(.workspaceMissingFolders, language: language)
+            return
+        }
+
+        // 为全部文件夹声明所有权（被其他窗口持有时静默跳过，不阻塞工作区打开）
+        if let coordinator {
+            for folder in folders {
+                if let identity = try? coordinator.sharedIdentityService.identity(for: folder, kind: .directory) {
+                    try? coordinator.claim(identity, for: id)
+                }
+            }
+        }
+
+        // session 直接驱动树变更：抑制 DirectoryChangeModifier 的破坏性重载
+        fileTreeViewModel.suppressNextDirectoryChangeReaction = true
+        appViewModel.openWorkspace(folders: folders, fileURL: url)
+
+        let restoredExpanded = Set(document.expandedDirs.map { URL(fileURLWithPath: $0) })
+        let restoredSelection = document.selectedFile.map { URL(fileURLWithPath: $0) }
+        await fileTreeViewModel.loadWorkspace(
+            folders: folders,
+            restoredExpandedDirs: restoredExpanded,
+            restoredSelection: restoredSelection
+        )
+
+        // 恢复选中文件并加载文档（生产环境 SelectionChangeModifier 也会响应，
+        // 与 openFile 的双重保障模式一致；headless 测试依赖此处直接加载）
+        if let selection = restoredSelection,
+           FileManager.default.fileExists(atPath: selection.path) {
+            await documentViewModel.loadFile(at: selection)
+        }
+
+        recordLastOpened(file: url, directory: nil)
+        SettingsModel.shared.addRecentItem(url: url, isDirectory: false)
+    }
+
+    // MARK: - 工作区命令
+
+    /// 是否需要工作区保存决策（关闭流程用）：
+    /// 根目录增删后工作区变脏（未保存的多根工作区或已关联文件的修改）。
+    var workspaceNeedsSaveDecision: Bool {
+        fileTreeViewModel.workspaceIsDirty
+    }
+
+    /// 添加文件夹到工作区（窗口级目录选择面板）。
+    /// 空白窗口时等价于打开目录（经统一路由）。
+    func addFolderToWorkspace() {
+        let language = SettingsModel.shared.languagePref.resolvedLanguage
+        let owningWindow = window
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let url: URL?
+            if let chooser = self.addFolderPanelChooserForTesting {
+                url = await chooser()
+            } else if let owningWindow {
+                url = await OpenPanelHelper.chooseDirectory(for: owningWindow, language: language)
+            } else {
+                url = nil
+            }
+            guard let url else { return }
+
+            if self.fileTreeViewModel.nodes.isEmpty {
+                // 空白窗口：等价于打开目录，走统一路由
+                self.coordinator?.enqueue(OpenRequest(url: url, source: .openPanel, preferredWindowID: self.id))
+                return
+            }
+            await self.performAddFolder(url)
+        }
+    }
+
+    /// 拖拽目录到侧边栏添加文件夹。
+    /// 空白窗口时等价于打开目录（经统一路由）；复用 performAddFolder 的校验/错误提示。
+    func addDroppedFolder(_ url: URL) {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
+              isDir.boolValue else { return }
+
+        if fileTreeViewModel.nodes.isEmpty {
+            coordinator?.enqueue(OpenRequest(url: url, source: .openPanel, preferredWindowID: id))
+            return
+        }
+        Task { @MainActor [weak self] in
+            await self?.performAddFolder(url)
+        }
+    }
+
+    /// 执行添加文件夹：校验/扫描由 VM 完成，本方法负责面板错误提示、
+    /// appViewModel 同步与所有权声明。
+    private func performAddFolder(_ url: URL) async {
+        let language = SettingsModel.shared.languagePref.resolvedLanguage
+        do {
+            try await fileTreeViewModel.addFolder(url)
+        } catch let error as FileTreeViewModel.AddFolderError {
+            let key: L10n.Key
+            switch error {
+            case .alreadyInWorkspace: key = .workspaceAlreadyAdded
+            case .nestedConflict: key = .workspaceNestedConflict
+            case .notADirectory: key = .workspaceMissingFolders
+            }
+            if let presenter = addFolderErrorPresenterForTesting {
+                presenter(key)
+                return
+            }
+            let alert = NSAlert()
+            alert.messageText = L10n.tr(key, language: language)
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            return
+        } catch {
+            fileTreeViewModel.errorMessage = error.localizedDescription
+            return
+        }
+
+        // 同步 appViewModel（置拑标记，避免 DirectoryChangeModifier 破坏性重载）
+        fileTreeViewModel.suppressNextDirectoryChangeReaction = true
+        appViewModel.rootDirectories = fileTreeViewModel.rootDirectories
+
+        // 声明新根目录所有权（与外部目录打开同语义）
+        if let coordinator,
+           let identity = try? coordinator.sharedIdentityService.identity(for: url, kind: .directory) {
+            try? coordinator.claim(identity, for: id)
+        }
+
+        if !appViewModel.isSidebarVisible {
+            appViewModel.toggleSidebar()
+        }
+    }
+
+    /// 从工作区移除文件夹（释放所有权并同步 appViewModel）。
+    func removeFolderFromWorkspace(_ url: URL) {
+        fileTreeViewModel.removeFolder(url)
+
+        if let coordinator,
+           let identity = try? coordinator.sharedIdentityService.identity(for: url, kind: .directory) {
+            coordinator.release(identity, for: id)
+        }
+
+        fileTreeViewModel.suppressNextDirectoryChangeReaction = true
+        appViewModel.rootDirectories = fileTreeViewModel.rootDirectories
+        if appViewModel.rootDirectories.isEmpty {
+            // 移除最后一个根：回到欢迎页，清除工作区关联
+            appViewModel.workspaceFileURL = nil
+        }
+    }
+
+    /// 保存工作区：已关联文件且未脏时 no-op；已关联直接覆写；未关联转另存为。
+    func handleSaveWorkspace() {
+        guard appViewModel.isWorkspaceMode else { return }
+        if let url = appViewModel.workspaceFileURL {
+            guard fileTreeViewModel.workspaceIsDirty else { return }
+            _ = performWorkspaceSave(to: url)
+            return
+        }
+        handleSaveWorkspaceAs()
+    }
+
+    /// 工作区另存为：窗口级保存面板（仅 .mdworkspace）。
+    func handleSaveWorkspaceAs() {
+        guard appViewModel.isWorkspaceMode else { return }
+        let settings = SettingsModel.shared
+        let language = settings.languagePref.resolvedLanguage
+        let suggestedName = (fileTreeViewModel.rootDirectories.first?.lastPathComponent ?? "Workspace")
+            + "." + WorkspaceDocument.fileExtension
+        let defaultDir = settings.lastOpenedDirectory ?? settings.lastOpenedFile?.deletingLastPathComponent()
+        let owningWindow = window
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let saveURL: URL?
+            if let chooser = self.workspaceSavePanelChooserForTesting {
+                saveURL = await chooser(defaultDir, suggestedName)
+            } else {
+                saveURL = await OpenPanelHelper.showWorkspaceSavePanel(
+                    for: owningWindow,
+                    language: language,
+                    defaultDirectory: defaultDir,
+                    suggestedName: suggestedName
+                )
+            }
+            guard let saveURL else { return }
+            _ = self.performWorkspaceSave(to: saveURL)
+        }
+    }
+
+    /// 执行工作区落盘：序列化当前根/展开/选中状态，成功后更新关联文件、
+    /// 复位脏标记、迁移所有权并记录最近打开。
+    @discardableResult
+    func performWorkspaceSave(to url: URL) -> Bool {
+        let document = WorkspaceFileService.makeDocument(
+            folders: fileTreeViewModel.rootDirectories,
+            expandedDirs: fileTreeViewModel.expandedDirs,
+            selectedFile: fileTreeViewModel.selectedFileURL
+        )
+        do {
+            let written = try WorkspaceFileService.save(document, to: url)
+            let oldURL = appViewModel.workspaceFileURL
+            appViewModel.workspaceFileURL = written
+            fileTreeViewModel.markWorkspaceSaved()
+
+            // 所有权：释放旧工作区文件（若由本窗口持有），声明新文件
+            if let coordinator {
+                if let oldURL, oldURL != written,
+                   let oldIdentity = try? coordinator.sharedIdentityService.identity(for: oldURL, kind: .workspace) {
+                    coordinator.release(oldIdentity, for: id)
+                }
+                if let identity = try? coordinator.sharedIdentityService.identity(for: written, kind: .workspace) {
+                    try? coordinator.claim(identity, for: id)
+                }
+            }
+
+            recordLastOpened(file: written, directory: nil)
+            SettingsModel.shared.addRecentItem(url: written, isDirectory: false)
+            return true
+        } catch {
+            return false
+        }
     }
 
     // MARK: - 目录树选择前路由
@@ -338,9 +594,11 @@ final class WindowSession {
 
     /// 内链目标无所有权冲突时的实际打开（根目录内走目录内导航，否则当前窗口单文件打开）。
     private func openLinkedMarkdownFile(_ url: URL) {
-        if let rootDir = appViewModel.rootDirectory,
-           url.standardizedFileURL.path.hasPrefix(rootDir.standardizedFileURL.path + "/") {
-            // 根目录内：复用目录内导航事务（声明所有权/释放旧文件/切换选中）
+        // 工作区任一根目录内：复用目录内导航事务（声明所有权/释放旧文件/切换选中）
+        let stdPath = url.standardizedFileURL.path
+        if appViewModel.rootDirectories.contains(where: {
+            stdPath.hasPrefix($0.standardizedFileURL.path + "/")
+        }) {
             requestFileSelection(url)
             return
         }
@@ -378,10 +636,13 @@ final class WindowSession {
 
     // MARK: - 关闭决策
 
-    /// 判断关闭本窗口是否需要 Untitled 保存确认。
+    /// 判断关闭本窗口是否需要保存确认（脏 Untitled 优先，其次是脏工作区）。
     func prepareForClose() -> CloseDecision {
         if documentViewModel.isUntitled && documentViewModel.isDirty {
             return .needsUntitledDecision
+        }
+        if workspaceNeedsSaveDecision {
+            return .needsWorkspaceDecision
         }
         return .close
     }
@@ -506,9 +767,10 @@ final class WindowSession {
             try? coordinator.migrateOwnership(from: oldURL, to: saveURL, for: self.id)
         }
 
-        if let rootDir = self.appViewModel.rootDirectory,
-           saveURL.path.hasPrefix(rootDir.path + "/") {
-            await self.fileTreeViewModel.loadDirectory(rootDir)
+        let roots = self.appViewModel.rootDirectories
+        if !roots.isEmpty,
+           roots.contains(where: { saveURL.path.hasPrefix($0.path + "/") }) {
+            await self.fileTreeViewModel.loadWorkspace(folders: roots)
             self.fileTreeViewModel.selectedFileURL = saveURL
         }
 
@@ -524,5 +786,7 @@ final class WindowSession {
 enum CloseDecision: Equatable, Sendable {
     case close
     case needsUntitledDecision
+    /// 工作区有未保存更改（多根增删后），需「保存工作区 / 不保存 / 取消」决策
+    case needsWorkspaceDecision
     case cancel
 }
