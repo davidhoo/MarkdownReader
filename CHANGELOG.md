@@ -14,6 +14,16 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.2.4] - 2026-08-10
+
+### 新增
+
+- **可选 Homebrew Tap 安装渠道**：新增自建 Tap `davidhoo/homebrew-markdownreader`，用户可通过 `brew tap davidhoo/markdownreader && brew install --cask markdownreader` 安装与升级。Release DMG 仍为首要安装方式，Homebrew 为可选替代
+  - 4 个 README（zh-Hans / zh-Hant / en / ja）各新增「Homebrew（可选）」小节，提供 tap / install / upgrade 命令
+  - 各语言均说明应用未公证，引导用户走 macOS 原生「仍要打开」流程，不提供 `xattr` 或关闭 Gatekeeper 的命令
+  - 新增 `docs/homebrew-tap-maintenance.md` 固化每次发布后的人工更新步骤（下载 DMG → 计算 SHA-256 → 更新 Cask → `brew audit` 校验 → 推送 Tap）
+  - Cask 声明 `auto_updates true`，承认应用既有更新能力；用户强制由 Homebrew 升级时使用 `--greedy`
+
 ## [2.2.3] - 2026-07-31
 
 ### 修复
