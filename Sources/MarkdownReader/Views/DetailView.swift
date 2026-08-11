@@ -635,7 +635,11 @@ struct DetailView: View {
         .onAppear { previewContent = documentViewModel.content }
         .onChange(of: documentViewModel.displayMode) { _, mode in
             // 进入编辑模式时立即同步一次，避免右栏短暂空白
-            if mode == .raw { previewContent = documentViewModel.content }
+            if mode == .raw {
+                previewContent = documentViewModel.content
+                // 应用「默认分栏」设置：进入编辑模式时按设置决定是否开启分栏预览
+                appViewModel.isSplitPreviewEnabled = settings.defaultSplitPreview
+            }
         }
         .onChange(of: documentViewModel.currentFileURL) { _, _ in
             previewContent = documentViewModel.content

@@ -26,6 +26,7 @@ public enum L10n {
         case settingsGeneralLanguageDesc
         case settingsGeneralDisplayTitle
         case settingsGeneralDisplayMode
+        case settingsGeneralDefaultSplitPreview
 
         // 设置 - 渲染宽度
         case settingsGeneralRenderedWidthTitle
@@ -288,6 +289,7 @@ public enum L10n {
         .settingsGeneralLanguageDesc: "Choose the interface language. \"Auto\" follows your system.",
         .settingsGeneralDisplayTitle: "Display",
         .settingsGeneralDisplayMode: "Default display mode",
+        .settingsGeneralDefaultSplitPreview: "Split view by default when editing",
         .settingsGeneralRenderedWidthTitle: "Rendered Width",
         .settingsGeneralRenderedWidthDesc: "Control the maximum width of rendered content. When off, a fixed width is used.",
         .settingsGeneralMaxWidthFollowsWindow: "Follow window width",
@@ -483,6 +485,7 @@ public enum L10n {
         .settingsGeneralLanguageDesc: "选择应用界面的语言。「自动检测」会跟随系统。",
         .settingsGeneralDisplayTitle: "显示",
         .settingsGeneralDisplayMode: "默认显示模式",
+        .settingsGeneralDefaultSplitPreview: "编辑时默认分栏",
         .settingsGeneralRenderedWidthTitle: "渲染宽度",
         .settingsGeneralRenderedWidthDesc: "控制渲染内容的最大宽度。关闭时使用固定宽度。",
         .settingsGeneralMaxWidthFollowsWindow: "跟随窗口宽度",
@@ -678,6 +681,7 @@ public enum L10n {
         .settingsGeneralLanguageDesc: "選擇應用介面的語言。「自動偵測」會跟隨系統。",
         .settingsGeneralDisplayTitle: "顯示",
         .settingsGeneralDisplayMode: "預設顯示模式",
+        .settingsGeneralDefaultSplitPreview: "編輯時預設分欄",
         .settingsGeneralRenderedWidthTitle: "渲染寬度",
         .settingsGeneralRenderedWidthDesc: "控制渲染內容的最大寬度。關閉時使用固定寬度。",
         .settingsGeneralMaxWidthFollowsWindow: "跟隨視窗寬度",

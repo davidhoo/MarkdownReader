@@ -51,12 +51,17 @@ struct GeneralSettingsView: View {
             SettingsSection(
                 title: L10n.tr(.settingsGeneralDisplayMode, language: language)
             ) {
-                Picker("", selection: $settings.defaultDisplayMode) {
-                    Text(L10n.tr(.displayModeRendered, language: language)).tag(DisplayMode.rendered)
-                    Text(L10n.tr(.displayModeRaw, language: language)).tag(DisplayMode.raw)
+                HStack(spacing: 12) {
+                    Picker("", selection: $settings.defaultDisplayMode) {
+                        Text(L10n.tr(.displayModeRendered, language: language)).tag(DisplayMode.rendered)
+                        Text(L10n.tr(.displayModeRaw, language: language)).tag(DisplayMode.raw)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 200)
+
+                    // 常驻显示：进入编辑模式时是否默认开启分栏预览
+                    Toggle(L10n.tr(.settingsGeneralDefaultSplitPreview, language: language), isOn: $settings.defaultSplitPreview)
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 200)
             }
 
             SettingsDivider()
