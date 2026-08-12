@@ -469,8 +469,8 @@
     // 内容区复制按钮相关状态
     _documentCopyTimer: null,
 
-    /// 内容区复制按钮 SVG（与代码块复制按钮风格一致）
-    _documentCopyIcon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M3 11V3a1.5 1.5 0 0 1 1.5-1.5H11"/></svg>',
+    /// 内容区复制按钮 SVG：与顶部路径按钮及编辑模式一致的 doc.on.doc 两张重叠文档图标
+    _documentCopyIcon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.4"/><path d="M3 11.5V4.4A1.4 1.4 0 0 1 4.4 3H11"/></svg>',
     _documentCopiedIcon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 5.5"/></svg>',
 
     /// 复制渲染态富文本：临时选中 #mr-content 后走浏览器原生 copy 路径，

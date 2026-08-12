@@ -697,19 +697,16 @@ struct DetailView: View {
                     copyRawContent()
                 } label: {
                     Image(systemName: contentCopyState.isShowingSuccess ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 12))
-                        .frame(width: 16, height: 16)
-                        .foregroundStyle(contentCopyState.isShowingSuccess ? themeColors.success : themeColors.fgSecondary)
-                        .padding(6)
-                        .background(themeColors.surface, in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(themeColors.border, lineWidth: 1))
-                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                        .font(.system(size: 11))
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(contentCopyState.isShowingSuccess ? themeColors.success : themeColors.fgMuted)
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
                 .help(L10n.tr(contentCopyState.isShowingSuccess ? .contentCopied : .contentCopy, language: language))
-                .padding(.trailing, 16)
-                .padding(.top, 8)
-                .transition(.opacity.combined(with: .scale))
+                .padding(.trailing, 11)
+                .padding(.top, 3)
+                .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.2), value: contentCopyState.isShowingSuccess)

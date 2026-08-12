@@ -374,30 +374,31 @@ mark {
    不修改 .markdown-preview、正文宽度或 padding。 */
 .mr-document-copy-btn {
   position: fixed;
-  top: 12px;
-  right: 12px;
+  top: 3px;
+  right: 11px;
   z-index: 50;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--border-radius);
-  background: var(--bg-muted);
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--fg-muted);
   cursor: pointer;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-  transition: opacity 0.2s, color 0.2s, background 0.2s, border-color 0.2s;
+  transition: opacity 0.2s, color 0.2s;
 }
 
 .mr-document-copy-btn:hover {
-  background: var(--bg-elevated);
   color: var(--ink);
 }
 
 .mr-document-copy-btn:active {
-  background: var(--border);
+  color: var(--ink);
 }
 
 .mr-document-copy-btn:focus-visible {
@@ -407,7 +408,6 @@ mark {
 
 .mr-document-copy-btn.mr-document-copy-btn-copied {
   color: var(--success);
-  border-color: var(--success);
 }
 
 /* 查找栏打开时隐藏：无 hit target，不接收点击。 */
