@@ -100,6 +100,8 @@ struct WebViewMarkdownView: View {
     /// session，按目录内导航或外部打开规则处理，不再全局广播。
     var onOpenLinkedMarkdownFile: ((URL) -> Void)?
 
+    @Environment(\.language) private var language
+
     @State private var page = WebPage()
     @Binding var exportedPage: WebPage?
     @State private var scrollPosition = ScrollPosition(edge: .top)
@@ -197,6 +199,10 @@ struct WebViewMarkdownView: View {
                 if !isVisible {
                     clearSearchHighlight()
                 }
+                syncDocumentCopyButtonVisibility()
+            }
+            .onChange(of: language) { _, _ in
+                updateDocumentCopyButtonLabels()
             }
             .onDisappear {
                 scrollSyncTimer?.invalidate()
@@ -260,7 +266,9 @@ struct WebViewMarkdownView: View {
             contentPadding: contentPadding,
             maxContentWidthFollowsWindow: maxContentWidthFollowsWindow,
             baseURL: baseURL,
-            isDark: isDark
+            isDark: isDark,
+            documentCopyTitle: L10n.tr(.contentCopy, language: language),
+            documentCopiedTitle: L10n.tr(.contentCopied, language: language)
         )
 
         let renderResult = MarkdownHTMLService.render(content, baseURL: baseURL)
@@ -272,6 +280,9 @@ struct WebViewMarkdownView: View {
         _ = page.load(html: html, baseURL: effectiveBaseURL)
         lastLoadedContent = content
         lastLoadedURL = fileURL
+
+        // 页面加载后同步查找栏显隐（查找栏打开期间渲染按钮隐藏）。
+        syncDocumentCopyButtonVisibility()
 
         if let line = scrollToLine {
             pendingScrollToLine = line
@@ -367,6 +378,23 @@ struct WebViewMarkdownView: View {
         }
     }
 
+    /// 查找栏显隐同步到 DOM 按钮：查找栏打开期间渲染复制按钮隐藏且不接收点击。
+    private func syncDocumentCopyButtonVisibility() {
+        let hidden = isFindBarVisible
+        Task { @MainActor [hidden] in
+            _ = try? await page.callJavaScript("MR.setDocumentCopyButtonHidden(\(hidden))")
+        }
+    }
+
+    /// 运行时语言变化时更新 DOM 按钮的普通/成功标签，不整页重新加载。
+    private func updateDocumentCopyButtonLabels() {
+        let normal = L10n.tr(.contentCopy, language: language).jsEscaped
+        let copied = L10n.tr(.contentCopied, language: language).jsEscaped
+        Task { @MainActor [normal, copied] in
+            _ = try? await page.callJavaScript("MR.setDocumentCopyButtonLabels('\(normal)', '\(copied)')")
+        }
+    }
+
     private func scheduleScrollSync() {
         scrollSyncTimer?.invalidate()
         scrollSyncTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
@@ -410,5 +438,16 @@ struct WebViewMarkdownView: View {
         Task { @MainActor [rounded] in
             _ = try? await page.callJavaScript("document.body.style.zoom = '\(rounded)'")
         }
+    }
+}
+
+private extension String {
+    /// 转义用于 JS 单引号字符串字面量的字符，与现有 updateContent/updateThemeCSS 转义一致。
+    var jsEscaped: String {
+        replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "'", with: "\\'")
     }
 }

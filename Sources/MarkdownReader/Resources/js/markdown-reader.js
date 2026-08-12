@@ -466,6 +466,108 @@
 
     _searchHighlights: [],
 
+    // 内容区复制按钮相关状态
+    _documentCopyTimer: null,
+
+    /// 内容区复制按钮 SVG（与代码块复制按钮风格一致）
+    _documentCopyIcon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M3 11V3a1.5 1.5 0 0 1 1.5-1.5H11"/></svg>',
+    _documentCopiedIcon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 5.5"/></svg>',
+
+    /// 复制渲染态富文本：临时选中 #mr-content 后走浏览器原生 copy 路径，
+    /// 确保剪贴板效果等同页面内全选复制。finally 中无论成败都恢复原选区。
+    /// 不得使用 navigator.clipboard.writeText 或隐藏 textarea（只复制纯文本）。
+    copyRenderedContent() {
+      const content = document.getElementById('mr-content');
+      if (!content) return false;
+      const selection = window.getSelection();
+      const oldRanges = Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange());
+      const range = document.createRange();
+      try {
+        range.selectNodeContents(content);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return document.execCommand('copy');
+      } finally {
+        selection.removeAllRanges();
+        oldRanges.forEach(oldRange => selection.addRange(oldRange));
+      }
+    },
+
+    /// 幂等创建内容区复制按钮。元素追加到 #mr-content 外部（document.body），
+    /// position: fixed 固定于内容视口右上角，不随正文滚动、不被复制进正文。
+    /// 不得随 MR.replaceContent() 删除。
+    addDocumentCopyButton() {
+      if (document.getElementById('mr-document-copy-btn')) {
+        MR.setDocumentCopyButtonLabels();
+        return;
+      }
+      const preview = document.querySelector('.markdown-preview');
+      const normalTitle = (preview && preview.dataset.documentCopyTitle) || 'Copy Content';
+      const btn = document.createElement('button');
+      btn.id = 'mr-document-copy-btn';
+      btn.className = 'mr-document-copy-btn';
+      btn.type = 'button';
+      btn.title = normalTitle;
+      btn.setAttribute('aria-label', normalTitle);
+      btn.innerHTML = MR._documentCopyIcon;
+      btn.dataset.normalTitle = normalTitle;
+      btn.dataset.copiedTitle = (preview && preview.dataset.documentCopiedTitle) || 'Content Copied';
+
+      btn.addEventListener('click', function() {
+        const ok = MR.copyRenderedContent();
+        if (!ok) return;
+        // 连续点击：clearTimeout 后重新计时，旧计时不会提前恢复复制图标。
+        if (MR._documentCopyTimer) {
+          clearTimeout(MR._documentCopyTimer);
+          MR._documentCopyTimer = null;
+        }
+        btn.classList.add('mr-document-copy-btn-copied');
+        btn.innerHTML = MR._documentCopiedIcon;
+        btn.title = btn.dataset.copiedTitle;
+        btn.setAttribute('aria-label', btn.dataset.copiedTitle);
+        MR._documentCopyTimer = setTimeout(() => {
+          MR._documentCopyTimer = null;
+          btn.classList.remove('mr-document-copy-btn-copied');
+          btn.innerHTML = MR._documentCopyIcon;
+          btn.title = btn.dataset.normalTitle;
+          btn.setAttribute('aria-label', btn.dataset.normalTitle);
+        }, 5000);
+      });
+
+      document.body.appendChild(btn);
+    },
+
+    /// 查找栏显隐同步：查找栏打开时按钮不可见且不接收点击。
+    setDocumentCopyButtonHidden(isHidden) {
+      const btn = document.getElementById('mr-document-copy-btn');
+      if (!btn) return;
+      if (isHidden) {
+        btn.classList.add('mr-document-copy-btn-hidden');
+      } else {
+        btn.classList.remove('mr-document-copy-btn-hidden');
+      }
+    },
+
+    /// 运行时语言变化时更新按钮的 title 与 aria-label，不整页重新加载。
+    setDocumentCopyButtonLabels(normal, copied) {
+      const btn = document.getElementById('mr-document-copy-btn');
+      if (!btn) return;
+      const preview = document.querySelector('.markdown-preview');
+      if (normal) {
+        btn.dataset.normalTitle = normal;
+        if (preview) preview.dataset.documentCopyTitle = normal;
+      }
+      if (copied) {
+        btn.dataset.copiedTitle = copied;
+        if (preview) preview.dataset.documentCopiedTitle = copied;
+      }
+      // 当前处于成功态时显示 copied 标签，否则显示 normal 标签。
+      const isCopied = btn.classList.contains('mr-document-copy-btn-copied');
+      const title = isCopied ? btn.dataset.copiedTitle : btn.dataset.normalTitle;
+      btn.title = title;
+      btn.setAttribute('aria-label', title);
+    },
+
     highlightSearch(query, caseSensitive, wholeWord, currentIndex) {
       MR.clearSearchHighlight();
       if (!query) return 0;
@@ -593,6 +695,7 @@
       MR.renderKaTeX();
       MR.renderAdmonitions();
       MR.addCopyButtons();
+      MR.addDocumentCopyButton();
       if (typeof Prism !== 'undefined') {
         Prism.highlightAll();
       }

@@ -47,10 +47,12 @@ public enum MarkdownHTMLService {
         )
     }
 
-    public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true) -> String {
+    public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "") -> String {
         let renderResult = render(content, baseURL: baseURL)
 
         let baseURLAttr = baseURL != nil ? " data-base-url=\"\(baseURL!.path.addingXMLAttributeEscapes)\"" : ""
+        let copyTitleAttr = " data-document-copy-title=\"\(documentCopyTitle.addingXMLAttributeEscapes)\""
+        let copiedTitleAttr = " data-document-copied-title=\"\(documentCopiedTitle.addingXMLAttributeEscapes)\""
 
         return """
         <!DOCTYPE html>
@@ -67,7 +69,7 @@ public enum MarkdownHTMLService {
             </style>
         </head>
         <body>
-            <div class="markdown-preview"\(baseURLAttr)>
+            <div class="markdown-preview"\(baseURLAttr)\(copyTitleAttr)\(copiedTitleAttr)>
                 <div id="mr-content">
                     \(renderResult.html)
                 </div>
