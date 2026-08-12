@@ -14,6 +14,16 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.2.8] - 2026-08-12
+
+### 优化
+
+- **WebView 渲染触发收敛为单次动作**：`fileURL`/`content`/`contentVersion` 三个属性变更此前各自直接调用完整或增量渲染，快速连续切换文件、Reload 或外部刷新时会产生多次冗余渲染。新增 `WebViewRenderScheduler`（纯值类型 + latest-wins 世代），三触发器统一经 `requestRender()` 递增世代，由 `.task(id:)` 在一次 `Task.yield()` 后对最终快照执行唯一动作（`loadPage`/`replaceContent`/`none`）。一次文件切换只产生一次完整加载；同文件同版本的纯内容变化仍走 `MR.replaceContent` 增量路径；旧增量 JS 写入在新请求或视图消失时被取消或世代拒绝。配套 `WebViewRenderSchedulerTests` 覆盖决策规则与世代基线
+
+### 新增
+
+- **渲染模式复制图标改用 SF Symbols**：渲染模式内容区复制按钮此前使用手写 SVG 图标，与系统原生 SF Symbol 存在双套维护。新增 `SFSymbolWebImageProvider`（`@MainActor`），将 11pt Regular 符号栅格化为 14pt 透明 PNG，按屏幕倍率缓存为 data URL，在整页加载时注入 `:root` CSS 变量。WebKit 侧以 CSS `mask` + `currentColor` 上色，保留主题颜色、成功绿色、14px 图标、24px 透明触控区及无背景无边框视觉。缓存键为 `{ 配置版本, displayScale }`，同倍率至多栅格化各一次；`replaceContent`、主题更新、点击与五秒复位均命中缓存。新增 `DocumentCopySymbol`/`DocumentCopyWebIcons` 模型定义图标数据合同，配 `DocumentCopyWebIconsTests` 与 `SFSymbolWebImageProviderTests`
+
 ## [2.2.7] - 2026-08-12
 
 ### 优化
