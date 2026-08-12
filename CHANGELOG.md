@@ -14,6 +14,14 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.2.6] - 2026-08-12
+
+### 修复
+
+- **统一内容区复制按钮外观**：渲染模式与编辑模式的复制按钮此前各自使用不同样式（渲染模式有边框、背景、阴影；编辑模式有圆角背景卡片），与顶部文件路径按钮风格不一致。现统一为无边框、透明背景的纯图标样式，三处入口视觉一致
+  - 渲染模式（WebKit）：`.mr-document-copy-btn` 移除 `border`、`background`、`box-shadow`，改为 24×24 透明区域；SVG 图标更新为与 SF Symbol `doc.on.doc` 一致的重叠双文档样式；hover/active 仅改变颜色
+  - 编辑模式（SwiftUI）：移除 `RoundedRectangle` 背景与阴影，改用 `fgMuted` 颜色的纯 `Image`，与渲染模式及顶部路径按钮统一
+
 ## [2.2.5] - 2026-08-12
 
 ### 新增
