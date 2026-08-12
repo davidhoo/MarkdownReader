@@ -48,8 +48,21 @@ public enum MarkdownHTMLService {
     }
 
     public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "") -> String {
-        let renderResult = render(content, baseURL: baseURL)
+        buildFullHTML(
+            renderResult: render(content, baseURL: baseURL),
+            themeCSS: themeCSS,
+            contentPadding: contentPadding,
+            maxContentWidthFollowsWindow: maxContentWidthFollowsWindow,
+            baseURL: baseURL,
+            isDark: isDark,
+            documentCopyTitle: documentCopyTitle,
+            documentCopiedTitle: documentCopiedTitle
+        )
+    }
 
+    /// 以已有 `RenderResult` 装配完整 HTML 页面壳。不接收原始 Markdown，也不再次调用
+    /// `render`，仅供调用方（如 WebView 完整加载）复用单次解析结果，避免重复 Markdown 预处理与解析。
+    public static func buildFullHTML(renderResult: RenderResult, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "") -> String {
         let baseURLAttr = baseURL != nil ? " data-base-url=\"\(baseURL!.path.addingXMLAttributeEscapes)\"" : ""
         let copyTitleAttr = " data-document-copy-title=\"\(documentCopyTitle.addingXMLAttributeEscapes)\""
         let copiedTitleAttr = " data-document-copied-title=\"\(documentCopiedTitle.addingXMLAttributeEscapes)\""

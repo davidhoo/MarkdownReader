@@ -106,10 +106,8 @@ struct WebViewMarkdownView: View {
     @Binding var exportedPage: WebPage?
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var lastLoadedContent: String = ""
-    @State private var lastLoadedURL: URL?
     @State private var scrollSyncTimer: Timer?
     @State private var isConfigured = false
-    @State private var currentHeadings: [MarkdownHTMLService.HeadingInfo] = []
     @State private var pendingScrollToLine: Int?
     @State private var zoomLevel: CGFloat = 1.0
     /// 上次处理的 contentVersion，用于检测程序化内容更新（reload/load）
@@ -260,8 +258,9 @@ struct WebViewMarkdownView: View {
 
     private func loadContent() {
         let baseURL = fileURL?.deletingLastPathComponent()
+        let renderResult = MarkdownHTMLService.render(content, baseURL: baseURL)
         let html = MarkdownHTMLService.buildFullHTML(
-            content: content,
+            renderResult: renderResult,
             themeCSS: themeCSS,
             contentPadding: contentPadding,
             maxContentWidthFollowsWindow: maxContentWidthFollowsWindow,
@@ -271,15 +270,11 @@ struct WebViewMarkdownView: View {
             documentCopiedTitle: L10n.tr(.contentCopied, language: language)
         )
 
-        let renderResult = MarkdownHTMLService.render(content, baseURL: baseURL)
-        currentHeadings = renderResult.headings
-
         scrollPosition = ScrollPosition(edge: .top)
 
         let effectiveBaseURL = baseURL ?? URL(string: "about:blank")!
         _ = page.load(html: html, baseURL: effectiveBaseURL)
         lastLoadedContent = content
-        lastLoadedURL = fileURL
 
         // 页面加载后同步查找栏显隐（查找栏打开期间渲染按钮隐藏）。
         syncDocumentCopyButtonVisibility()
@@ -299,7 +294,6 @@ struct WebViewMarkdownView: View {
     private func updateContent(_ content: String) {
         let baseURL = fileURL?.deletingLastPathComponent()
         let renderResult = MarkdownHTMLService.render(content, baseURL: baseURL)
-        currentHeadings = renderResult.headings
 
         let escapedHTML = renderResult.html
             .replacingOccurrences(of: "\\", with: "\\\\")
