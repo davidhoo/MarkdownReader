@@ -64,8 +64,13 @@ struct DetailView: View {
     /// PDF 导出失败提示
     @State private var showExportPDFError = false
 
-    /// 路径复制成功提示
-    @State private var showPathCopied = false
+    /// 顶部路径复制反馈（独立于内容区复制，5 秒对号）
+    @State private var pathCopyState = CopyFeedbackState()
+    @State private var pathCopyResetTask: Task<Void, Never>?
+
+    /// 编辑模式内容区复制反馈（独立 5 秒对号）
+    @State private var contentCopyState = CopyFeedbackState()
+    @State private var contentCopyResetTask: Task<Void, Never>?
 
     /// 导出用的 WebPage 引用
     @State private var exportedPage: WebPage?
@@ -125,6 +130,8 @@ struct DetailView: View {
             commandTarget?.findHandler = nil
             commandTarget?.reloadHandler = nil
             commandTarget?.exportPDFHandler = nil
+            // 视图退出：取消复制反馈计时并隐藏对号。
+            invalidateCopyFeedback()
         }
     }
 
@@ -193,17 +200,15 @@ struct DetailView: View {
                         let pasteboard = NSPasteboard.general
                         pasteboard.clearContents()
                         pasteboard.setString(path, forType: .string)
-                        showPathCopied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            showPathCopied = false
-                        }
+                        beginPathCopyFeedback()
                     } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10))
-                            .foregroundStyle(themeColors.fgMuted)
+                        Image(systemName: pathCopyState.isShowingSuccess ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 11))
+                            .frame(width: 14)
+                            .foregroundStyle(pathCopyState.isShowingSuccess ? themeColors.success : themeColors.fgMuted)
                     }
                     .buttonStyle(.plain)
-                    .help(L10n.tr(.titleBarCopyPath, language: language))
+                    .help(L10n.tr(pathCopyState.isShowingSuccess ? .titleBarPathCopied : .titleBarCopyPath, language: language))
                     .padding(.leading, 2)
                 }
             }
@@ -297,25 +302,51 @@ struct DetailView: View {
                 Toggle(L10n.tr(.fileModifiedExternallyDontRemind, language: language), isOn: $dontRemindAgain)
             }
         }
-        .overlay(alignment: .top) {
-            if showPathCopied {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                    Text(L10n.tr(.titleBarPathCopied, language: language))
-                        .font(.system(size: 12))
-                }
-                .foregroundStyle(themeColors.fgSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(themeColors.surface, in: Capsule())
-                .overlay(Capsule().stroke(themeColors.border, lineWidth: 1))
-                .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
-                .padding(.top, 4)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+    }
+
+    // MARK: - 复制反馈
+
+    /// 顶部路径复制成功后启动 5 秒对号。连续点击时取消旧 task、以最新 generation
+    /// 重新计时，旧计时不会提前清掉新对号。
+    private func beginPathCopyFeedback() {
+        pathCopyResetTask?.cancel()
+        let generation = pathCopyState.begin()
+        pathCopyResetTask = Task { @MainActor [generation] in
+            try? await Task.sleep(for: .seconds(5))
+            if Task.isCancelled { return }
+            pathCopyState.reset(ifCurrent: generation)
         }
-        .animation(.easeInOut(duration: 0.2), value: showPathCopied)
+    }
+
+    /// 编辑模式内容复制成功后启动 5 秒对号，语义同路径复制。
+    private func beginContentCopyFeedback() {
+        contentCopyResetTask?.cancel()
+        let generation = contentCopyState.begin()
+        contentCopyResetTask = Task { @MainActor [generation] in
+            try? await Task.sleep(for: .seconds(5))
+            if Task.isCancelled { return }
+            contentCopyState.reset(ifCurrent: generation)
+        }
+    }
+
+    /// 编辑模式复制：写入当前原始 Markdown。仅复制真实成功后才显示对号。
+    /// 不调用 Select All，不改动 NSTextView selection 或 undo 栈。
+    private func copyRawContent() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(documentViewModel.content, forType: .string)
+        beginContentCopyFeedback()
+    }
+
+    /// 取消所有复制反馈计时并隐藏对号。模式/文件/视图生命周期变化时调用，
+    /// 防止旧文档的成功态残留到新文档。
+    private func invalidateCopyFeedback() {
+        pathCopyResetTask?.cancel()
+        pathCopyResetTask = nil
+        pathCopyState.invalidate()
+        contentCopyResetTask?.cancel()
+        contentCopyResetTask = nil
+        contentCopyState.invalidate()
     }
 
     // MARK: - 内容区
@@ -654,10 +685,39 @@ struct DetailView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: appViewModel.isFindBarVisible)
+        .overlay(alignment: .topTrailing) {
+            // 编辑模式内容区右上角原生复制按钮。
+            // 仅 raw 模式 + 有文档 + 查找栏关闭时显示，避免与查找栏浮层重叠。
+            if documentViewModel.hasDocument
+                && documentViewModel.displayMode == .raw
+                && !appViewModel.isFindBarVisible {
+                Button {
+                    copyRawContent()
+                } label: {
+                    Image(systemName: contentCopyState.isShowingSuccess ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 12))
+                        .frame(width: 16, height: 16)
+                        .foregroundStyle(contentCopyState.isShowingSuccess ? themeColors.success : themeColors.fgSecondary)
+                        .padding(6)
+                        .background(themeColors.surface, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(themeColors.border, lineWidth: 1))
+                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.tr(contentCopyState.isShowingSuccess ? .contentCopied : .contentCopy, language: language))
+                .padding(.trailing, 16)
+                .padding(.top, 8)
+                .transition(.opacity.combined(with: .scale))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: contentCopyState.isShowingSuccess)
         .onChange(of: findReplaceViewModel.searchText) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isCaseSensitive) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isWholeWord) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isRegularExpression) { _, _ in performSearch() }
+        // 模式/文件切换：废弃旧文档的复制反馈，防止残留对号。
+        .onChange(of: documentViewModel.displayMode) { _, _ in invalidateCopyFeedback() }
+        .onChange(of: documentViewModel.currentFileURL) { _, _ in invalidateCopyFeedback() }
     }
 
     /// 把 find/reload/exportPDF handler 注册到注入的本窗口命令目标上。
