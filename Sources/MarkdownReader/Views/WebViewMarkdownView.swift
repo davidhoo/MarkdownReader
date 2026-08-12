@@ -101,6 +101,9 @@ struct WebViewMarkdownView: View {
     var onOpenLinkedMarkdownFile: ((URL) -> Void)?
 
     @Environment(\.language) private var language
+    /// 当前屏幕像素倍率。变化时经既有 `requestRender()` 走 latest-wins 调度整页重载，
+    /// 以便注入对应倍率的缓存复制图标 CSS 变量。不绕过 scheduler 直接 `page.load`。
+    @Environment(\.displayScale) private var displayScale
 
     @State private var page = WebPage()
     @Binding var exportedPage: WebPage?
@@ -136,6 +139,7 @@ struct WebViewMarkdownView: View {
             .onChange(of: searchCurrentIndex) { _, newValue in setSearchCurrent(newValue) }
             .onChange(of: isFindBarVisible) { _, isVisible in handleFindBarVisibleChange(isVisible) }
             .onChange(of: language) { _, _ in updateDocumentCopyButtonLabels() }
+            .onChange(of: displayScale) { _, _ in requestRender() }
             .modifier(WebViewRenderLifecycleModifier(
                 commandTargetIdentifier: commandTarget?.objectIdentifier,
                 onDisappear: handleDisappear,
@@ -291,6 +295,11 @@ struct WebViewMarkdownView: View {
     private func loadContent(_ snapshot: WebViewRenderSnapshot) {
         let baseURL = snapshot.fileURL?.deletingLastPathComponent()
         let renderResult = MarkdownHTMLService.render(snapshot.content, baseURL: baseURL)
+        // 仅整页加载时获取缓存图标：按当前屏幕倍率取 data URL，传给页面壳注入 :root CSS 变量。
+        // replaceContent、updateThemeCSS、copy click、5 秒 timer 与 mr:// handler 均不调用提供者。
+        let documentCopyWebIcons = SFSymbolWebImageProvider.shared.documentCopyWebIcons(
+            displayScale: displayScale
+        )
         let html = MarkdownHTMLService.buildFullHTML(
             renderResult: renderResult,
             themeCSS: themeCSS,
@@ -299,7 +308,8 @@ struct WebViewMarkdownView: View {
             baseURL: baseURL,
             isDark: isDark,
             documentCopyTitle: L10n.tr(.contentCopy, language: language),
-            documentCopiedTitle: L10n.tr(.contentCopied, language: language)
+            documentCopiedTitle: L10n.tr(.contentCopied, language: language),
+            documentCopyWebIcons: documentCopyWebIcons
         )
 
         scrollPosition = ScrollPosition(edge: .top)

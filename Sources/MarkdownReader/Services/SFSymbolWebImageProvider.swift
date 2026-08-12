@@ -62,7 +62,7 @@ public final class SFSymbolWebImageProvider {
     ///
     /// 隔离于 `@MainActor`——所有 AppKit 栅格化只在主线程发生，闭包仅在主线程被调用，
     /// 故无需跨 actor。测试注入的计数 closure 同样运行在 `@MainActor` 测试上下文。
-    public typealias Rasterizer = @MainActor (Int) -> (copy: Data, copied: Data)?
+    typealias Rasterizer = @MainActor (Int) -> (copy: Data, copied: Data)?
 
     private let rasterizer: Rasterizer
 

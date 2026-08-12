@@ -203,7 +203,7 @@ struct DetailView: View {
                             beginPathCopyFeedback()
                         }
                     } label: {
-                        Image(systemName: pathCopyState.isShowingSuccess ? "checkmark" : "doc.on.doc")
+                        Image(systemName: pathCopyState.isShowingSuccess ? DocumentCopySymbol.copied.rawValue : DocumentCopySymbol.copy.rawValue)
                             .font(.system(size: 11))
                             .frame(width: 14)
                             .foregroundStyle(pathCopyState.isShowingSuccess ? themeColors.success : themeColors.fgMuted)
@@ -696,7 +696,7 @@ struct DetailView: View {
                 Button {
                     copyRawContent()
                 } label: {
-                    Image(systemName: contentCopyState.isShowingSuccess ? "checkmark" : "doc.on.doc")
+                    Image(systemName: contentCopyState.isShowingSuccess ? DocumentCopySymbol.copied.rawValue : DocumentCopySymbol.copy.rawValue)
                         .font(.system(size: 11))
                         .frame(width: 14, height: 14)
                         .foregroundStyle(contentCopyState.isShowingSuccess ? themeColors.success : themeColors.fgMuted)
