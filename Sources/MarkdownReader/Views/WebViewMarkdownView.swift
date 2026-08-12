@@ -105,17 +105,52 @@ struct WebViewMarkdownView: View {
     @State private var page = WebPage()
     @Binding var exportedPage: WebPage?
     @State private var scrollPosition = ScrollPosition(edge: .top)
-    @State private var lastLoadedContent: String = ""
     @State private var scrollSyncTimer: Timer?
     @State private var isConfigured = false
     @State private var pendingScrollToLine: Int?
     @State private var zoomLevel: CGFloat = 1.0
-    /// 上次处理的 contentVersion，用于检测程序化内容更新（reload/load）
-    @State private var lastHandledContentVersion: Int = 0
+    /// 渲染触发收敛：latest-wins 请求世代。`fileURL`/`content`/`contentVersion`
+    /// 任一变化只递增世代；`.task(id:)` 在一次 `Task.yield()` 后对最终快照执行唯一渲染。
+    @State private var renderScheduler = WebViewRenderScheduler()
+    /// 上一次已应用的渲染快照，用于决策下一次动作（loadPage/replaceContent/none）。
+    @State private var lastAppliedRender: WebViewRenderSnapshot?
+    /// 当前进行中的增量 `MR.replaceContent` 写入任务，新请求或视图消失时取消。
+    @State private var contentReplacementTask: Task<Void, Never>?
     /// 持有 navigationDecider，使其生命周期与视图一致，便于注入内链 closure。
     @State private var navigationDecider = MarkdownNavigationDecider()
 
     var body: some View {
+        webViewBase
+            .onAppear { handleAppear() }
+            .onChange(of: content) { _, _ in requestRender() }
+            .onChange(of: contentVersion) { _, _ in requestRender() }
+            .onChange(of: fileURL) { _, _ in requestRender() }
+            .onChange(of: scrollToLine) { _, newValue in handleScrollToLineChange(newValue) }
+            .onChange(of: page.isLoading) { _, isLoading in handleLoadingChange(isLoading) }
+            .onChange(of: themeCSS) { _, _ in updateThemeCSS(themeCSS) }
+            .onChange(of: contentPadding) { _, newValue in updateContentPadding(newValue) }
+            .onChange(of: maxContentWidthFollowsWindow) { _, newValue in updateMaxContentWidth(newValue) }
+            .onChange(of: searchQuery) { _, _ in updateSearchHighlight() }
+            .onChange(of: searchCaseSensitive) { _, _ in updateSearchHighlight() }
+            .onChange(of: searchWholeWord) { _, _ in updateSearchHighlight() }
+            .onChange(of: searchCurrentIndex) { _, newValue in setSearchCurrent(newValue) }
+            .onChange(of: isFindBarVisible) { _, isVisible in handleFindBarVisibleChange(isVisible) }
+            .onChange(of: language) { _, _ in updateDocumentCopyButtonLabels() }
+            .modifier(WebViewRenderLifecycleModifier(
+                commandTargetIdentifier: commandTarget?.objectIdentifier,
+                onDisappear: handleDisappear,
+                onCommandTargetChange: registerZoomHandler,
+                renderGeneration: renderScheduler.generation,
+                renderTaskBody: renderTaskBody
+            ))
+            .environment(\.openURL, OpenURLAction { url in
+                NSWorkspace.shared.open(url)
+                return .handled
+            })
+    }
+
+    /// WebView 及其纯展示配置，不含事件 modifier。拆分以减轻整条 View 表达式的类型推断负担。
+    private var webViewBase: some View {
         WebView(page)
             .webViewScrollPosition($scrollPosition)
             .webViewLinkPreviews(.disabled)
@@ -128,93 +163,93 @@ struct WebViewMarkdownView: View {
             }, action: { _, _ in
                 scheduleScrollSync()
             })
-            .onAppear {
-                exportedPage = page
-                configureAndLoad()
-                registerZoomHandler()
-                syncLinkedFileHandler()
-            }
-            .onChange(of: content) { _, newContent in
-                if newContent == lastLoadedContent { return }
-                if lastLoadedContent.isEmpty {
-                    loadContent()
-                } else {
-                    updateContent(newContent)
-                    lastLoadedContent = newContent
-                }
-            }
-            .onChange(of: contentVersion) { _, newVersion in
-                // contentVersion 变化意味着 ViewModel 程序化更新了内容（如 reload）
-                // 即使 content 值与 lastLoadedContent 相同，也需要完全重新加载
-                if newVersion != lastHandledContentVersion {
-                    lastHandledContentVersion = newVersion
-                    loadContent()
-                }
-            }
-            .onChange(of: fileURL) { _, _ in
-                loadContent()
-            }
-            .onChange(of: scrollToLine) { _, newValue in
-                if let line = newValue {
-                    if page.isLoading {
-                        pendingScrollToLine = line
-                    } else {
-                        scrollToLineNumber(line)
-                    }
-                }
-            }
-            .onChange(of: page.isLoading) { _, isLoading in
-                if !isLoading, let line = pendingScrollToLine {
-                    pendingScrollToLine = nil
-                    scrollToLineNumber(line)
-                }
-                if !isLoading && zoomLevel != 1.0 {
-                    restoreZoom()
-                }
-            }
-            .onChange(of: themeCSS) { _, _ in
-                updateThemeCSS(themeCSS)
-            }
-            .onChange(of: contentPadding) { _, newValue in
-                updateContentPadding(newValue)
-            }
-            .onChange(of: maxContentWidthFollowsWindow) { _, newValue in
-                updateMaxContentWidth(newValue)
-            }
-            .onChange(of: searchQuery) { _, _ in
-                updateSearchHighlight()
-            }
-            .onChange(of: searchCaseSensitive) { _, _ in
-                updateSearchHighlight()
-            }
-            .onChange(of: searchWholeWord) { _, _ in
-                updateSearchHighlight()
-            }
-            .onChange(of: searchCurrentIndex) { _, newValue in
-                setSearchCurrent(newValue)
-            }
-            .onChange(of: isFindBarVisible) { _, isVisible in
-                if !isVisible {
-                    clearSearchHighlight()
-                }
-                syncDocumentCopyButtonVisibility()
-            }
-            .onChange(of: language) { _, _ in
-                updateDocumentCopyButtonLabels()
-            }
-            .onDisappear {
-                scrollSyncTimer?.invalidate()
-                // 视图退出：清理 zoom handler，避免残留回调指向已销毁视图。
-                commandTarget?.zoomHandler = nil
-                navigationDecider.onOpenLinkedMarkdownFile = nil
-            }
-            // 回归修复：zoom handler 直接注册到注入的本窗口命令目标，
-            // 不再发布独立 focusedSceneValue（覆盖会抢夺焦点路由）。
-            .onChange(of: commandTarget?.objectIdentifier) { _, _ in registerZoomHandler() }
-            .environment(\.openURL, OpenURLAction { url in
-                NSWorkspace.shared.open(url)
-                return .handled
-            })
+    }
+
+    /// `.onAppear` 入口：导出 page、配置 WebPage、注册 zoom handler、同步内链 closure，并发起首次渲染请求。
+    private func handleAppear() {
+        exportedPage = page
+        configurePageIfNeeded()
+        registerZoomHandler()
+        syncLinkedFileHandler()
+        requestRender()
+    }
+
+    /// `scrollToLine` 变化：页面加载中暂存，否则立即滚动。
+    private func handleScrollToLineChange(_ newValue: Int?) {
+        guard let line = newValue else { return }
+        if page.isLoading {
+            pendingScrollToLine = line
+        } else {
+            scrollToLineNumber(line)
+        }
+    }
+
+    /// `page.isLoading` 变化：加载完成后处理待滚动行号并恢复缩放。
+    private func handleLoadingChange(_ isLoading: Bool) {
+        if !isLoading, let line = pendingScrollToLine {
+            pendingScrollToLine = nil
+            scrollToLineNumber(line)
+        }
+        if !isLoading && zoomLevel != 1.0 {
+            restoreZoom()
+        }
+    }
+
+    /// `.task(id: generation)` 的任务体，抽成独立函数以减轻整条 View 表达式的类型推断负担。
+    private func renderTaskBody() async {
+        let generation = renderScheduler.generation
+        await Task.yield()
+        guard !Task.isCancelled, renderScheduler.accepts(generation), isConfigured else { return }
+        applyLatestRender(generation: generation)
+    }
+
+    /// `.onDisappear` 清理：取消增量写入、失效世代、清理 zoom handler 与内链 closure。
+    private func handleDisappear() {
+        scrollSyncTimer?.invalidate()
+        contentReplacementTask?.cancel()
+        contentReplacementTask = nil
+        _ = renderScheduler.request()
+        commandTarget?.zoomHandler = nil
+        navigationDecider.onOpenLinkedMarkdownFile = nil
+    }
+
+    /// `isFindBarVisible` 变化：关闭时清除查找高亮，并同步渲染复制按钮显隐。
+    private func handleFindBarVisibleChange(_ isVisible: Bool) {
+        if !isVisible {
+            clearSearchHighlight()
+        }
+        syncDocumentCopyButtonVisibility()
+    }
+
+    /// 请求一次渲染：取消进行中的增量写入并递增世代。不解析 Markdown，也不调用 `page.load`。
+    /// 三个文档输入的 `.onChange` 都只调用此方法，把“何时渲染”收敛到一个世代。
+    private func requestRender() {
+        contentReplacementTask?.cancel()
+        contentReplacementTask = nil
+        _ = renderScheduler.request()
+    }
+
+    /// 对当前输入构造最终快照，按策略执行唯一渲染动作。
+    /// 必须在 `.task(id:)` 的 `Task.yield()` 之后调用，确保读到的是同一轮状态收敛后的值。
+    private func applyLatestRender(generation: UInt) {
+        let next = WebViewRenderSnapshot(
+            fileURL: fileURL,
+            content: content,
+            contentVersion: contentVersion
+        )
+
+        switch WebViewRenderPolicy.action(previous: lastAppliedRender, next: next) {
+        case .none:
+            return
+        case .loadPage:
+            contentReplacementTask?.cancel()
+            contentReplacementTask = nil
+            lastAppliedRender = next
+            loadContent(next)
+        case .replaceContent:
+            lastAppliedRender = next
+            replaceContent(next, generation: generation)
+        }
     }
 
     /// 把 zoom handler 注册到注入的本窗口命令目标（由 WindowSceneHost 发布并绑定本 session）。
@@ -234,11 +269,10 @@ struct WebViewMarkdownView: View {
         navigationDecider.onOpenLinkedMarkdownFile = onOpenLinkedMarkdownFile
     }
 
-    private func configureAndLoad() {
-        guard !isConfigured else {
-            loadContent()
-            return
-        }
+    /// 仅创建并配置 `WebPage`、导出引用、注入 navigation decider；不直接加载内容。
+    /// 首次配置后内容加载由 `requestRender()` → `.task(id:)` → `applyLatestRender` 统一调度。
+    private func configurePageIfNeeded() {
+        guard !isConfigured else { return }
         isConfigured = true
 
         let scheme = URLScheme("mr")!
@@ -252,13 +286,11 @@ struct WebViewMarkdownView: View {
             navigationDecider: navigationDecider
         )
         exportedPage = page
-
-        loadContent()
     }
 
-    private func loadContent() {
-        let baseURL = fileURL?.deletingLastPathComponent()
-        let renderResult = MarkdownHTMLService.render(content, baseURL: baseURL)
+    private func loadContent(_ snapshot: WebViewRenderSnapshot) {
+        let baseURL = snapshot.fileURL?.deletingLastPathComponent()
+        let renderResult = MarkdownHTMLService.render(snapshot.content, baseURL: baseURL)
         let html = MarkdownHTMLService.buildFullHTML(
             renderResult: renderResult,
             themeCSS: themeCSS,
@@ -274,7 +306,6 @@ struct WebViewMarkdownView: View {
 
         let effectiveBaseURL = baseURL ?? URL(string: "about:blank")!
         _ = page.load(html: html, baseURL: effectiveBaseURL)
-        lastLoadedContent = content
 
         // 页面加载后同步查找栏显隐（查找栏打开期间渲染按钮隐藏）。
         syncDocumentCopyButtonVisibility()
@@ -291,18 +322,15 @@ struct WebViewMarkdownView: View {
         }
     }
 
-    private func updateContent(_ content: String) {
-        let baseURL = fileURL?.deletingLastPathComponent()
-        let renderResult = MarkdownHTMLService.render(content, baseURL: baseURL)
+    private func replaceContent(_ snapshot: WebViewRenderSnapshot, generation: UInt) {
+        let baseURL = snapshot.fileURL?.deletingLastPathComponent()
+        let renderResult = MarkdownHTMLService.render(snapshot.content, baseURL: baseURL)
 
-        let escapedHTML = renderResult.html
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "'", with: "\\'")
+        let escapedHTML = renderResult.html.jsEscaped
 
-        Task { @MainActor [escapedHTML] in
+        contentReplacementTask?.cancel()
+        contentReplacementTask = Task { @MainActor [escapedHTML, generation, page] in
+            guard !Task.isCancelled, renderScheduler.accepts(generation) else { return }
             _ = try? await page.callJavaScript("MR.replaceContent('\(escapedHTML)')")
         }
     }
@@ -443,5 +471,29 @@ private extension String {
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "\\r")
             .replacingOccurrences(of: "'", with: "\\'")
+    }
+}
+
+/// 承载 WebView 生命周期末尾的几个 modifier（onDisappear / 命令目标变化 /
+/// 渲染触发收敛的 `.task(id:)`）。抽成 `ViewModifier` 以打断主 `body` 的超长
+/// modifier 链，让 Swift 类型推断在合理时间内完成。
+private struct WebViewRenderLifecycleModifier: ViewModifier {
+    let commandTargetIdentifier: ObjectIdentifier?
+    let onDisappear: () -> Void
+    let onCommandTargetChange: () -> Void
+    let renderGeneration: UInt
+    let renderTaskBody: () async -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onDisappear { onDisappear() }
+            // 回归修复：zoom handler 直接注册到注入的本窗口命令目标，
+            // 不再发布独立 focusedSceneValue（覆盖会抢夺焦点路由）。
+            .onChange(of: commandTargetIdentifier) { _, _ in onCommandTargetChange() }
+            // 渲染触发收敛：三个文档输入只递增世代；本任务在一次 yield 后对最终快照
+            // 执行唯一渲染动作，旧世代随新请求自动取消。
+            .task(id: renderGeneration) {
+                await renderTaskBody()
+            }
     }
 }
