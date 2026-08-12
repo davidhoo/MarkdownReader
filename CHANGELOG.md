@@ -14,6 +14,22 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.2.5] - 2026-08-12
+
+### 新增
+
+- **内容区复制与统一五秒对号反馈**：渲染模式与编辑模式内容区右上角各新增复制按钮，成功后图标变对号、5 秒后恢复；顶部文件路径按钮的反馈从居中 Toast 改为同样的对号状态切换。三处入口各自独立计时，连续点击从最后一次成功重新计算，互不串扰
+  - 渲染模式复制按钮注入 WebKit 文档内（`mr-document-copy-btn`），由真实 `click` 事件临时选中 `#mr-content` 走浏览器原生复制，保留标题、强调、表格、代码等富文本样式；`position: fixed` 固定不随滚动离开视口，不进入正文选区；查找栏打开时隐藏
+  - 编辑模式复制按钮为原生 SwiftUI 浮层，直接写 `documentViewModel.content` 的原始 Markdown 到 `NSPasteboard`，不经 Select All 或当前选区，避免影响焦点与 per-file undo
+  - 新增可测试的 `CopyFeedbackState` 纯逻辑（成功才置对号、连续点击重置计时），配 `CopyFeedbackStateTests` 覆盖状态机
+  - PDF 导出时隐藏渲染页复制按钮，避免出现在导出产物中
+  - `L10n` 新增 `contentCopy` / `contentCopied` 三语文案（zh-Hans / zh-Hant / en）
+- **MIT 许可证文件**：补上根目录 `LICENSE`，与项目声明的 MIT 许可证一致
+
+### 修复
+
+- **原生复制路径检查剪贴板写入结果**：`NSPasteboard.setString` 返回值纳入成功判断，写入失败时不亮对号，避免给用户复制成功的错觉
+
 ## [2.2.4] - 2026-08-10
 
 ### 新增
