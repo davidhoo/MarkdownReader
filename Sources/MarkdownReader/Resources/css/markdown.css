@@ -416,3 +416,7 @@ mark {
   visibility: hidden;
   pointer-events: none;
 }
+
+@media print {
+  .mr-document-copy-btn { display: none !important; }
+}

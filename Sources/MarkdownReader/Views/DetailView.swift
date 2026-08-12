@@ -199,8 +199,9 @@ struct DetailView: View {
                     Button {
                         let pasteboard = NSPasteboard.general
                         pasteboard.clearContents()
-                        pasteboard.setString(path, forType: .string)
-                        beginPathCopyFeedback()
+                        if pasteboard.setString(path, forType: .string) {
+                            beginPathCopyFeedback()
+                        }
                     } label: {
                         Image(systemName: pathCopyState.isShowingSuccess ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 11))
@@ -334,8 +335,9 @@ struct DetailView: View {
     private func copyRawContent() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(documentViewModel.content, forType: .string)
-        beginContentCopyFeedback()
+        if pasteboard.setString(documentViewModel.content, forType: .string) {
+            beginContentCopyFeedback()
+        }
     }
 
     /// 取消所有复制反馈计时并隐藏对号。模式/文件/视图生命周期变化时调用，
