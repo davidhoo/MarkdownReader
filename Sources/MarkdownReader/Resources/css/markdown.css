@@ -410,6 +410,27 @@ mark {
   color: var(--success);
 }
 
+/* 复制按钮 mask glyph：透明 PNG 的 alpha mask，颜色由父按钮 currentColor 决定。
+   不增 background/border/box-shadow/filter，无 SVG/静态 fallback。 */
+.mr-document-copy-glyph {
+  width: 14px;
+  height: 14px;
+  background-color: currentColor;
+  -webkit-mask-image: var(--mr-document-copy-icon);
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 14px 14px;
+  mask-image: var(--mr-document-copy-icon);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: 14px 14px;
+}
+
+.mr-document-copy-glyph-copied {
+  -webkit-mask-image: var(--mr-document-copied-icon);
+  mask-image: var(--mr-document-copied-icon);
+}
+
 /* 查找栏打开时隐藏：无 hit target，不接收点击。 */
 .mr-document-copy-btn.mr-document-copy-btn-hidden {
   opacity: 0;

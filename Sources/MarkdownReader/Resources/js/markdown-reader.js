@@ -469,10 +469,6 @@
     // 内容区复制按钮相关状态
     _documentCopyTimer: null,
 
-    /// 内容区复制按钮 SVG：与顶部路径按钮及编辑模式一致的 doc.on.doc 两张重叠文档图标
-    _documentCopyIcon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.4"/><path d="M3 11.5V4.4A1.4 1.4 0 0 1 4.4 3H11"/></svg>',
-    _documentCopiedIcon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 5.5"/></svg>',
-
     /// 复制渲染态富文本：临时选中 #mr-content 后走浏览器原生 copy 路径，
     /// 确保剪贴板效果等同页面内全选复制。finally 中无论成败都恢复原选区。
     /// 不得使用 navigator.clipboard.writeText 或隐藏 textarea（只复制纯文本）。
@@ -493,14 +489,40 @@
       }
     },
 
+    /// 文档复制按钮的 mask 图标是否可用：要求 :root 同时存在两个 CSS 变量。
+    /// unavailable 时不创建按钮，setDocumentCopyButtonHidden / setDocumentCopyButtonLabels
+    /// 与复制命令必须安全处理按钮不存在。
+    _documentCopyIconsAvailable() {
+      const rootStyle = getComputedStyle(document.documentElement);
+      const copyIcon = rootStyle.getPropertyValue('--mr-document-copy-icon').trim();
+      const copiedIcon = rootStyle.getPropertyValue('--mr-document-copied-icon').trim();
+      return Boolean(copyIcon) && Boolean(copiedIcon);
+    },
+
+    /// 设置按钮的 mask glyph 子节点。isCopied=true 切到成功态 class。
+    /// 只替换 glyph 子节点，不触碰 button type/id/title/aria-label/颜色 class/计时器/listener。
+    setDocumentCopyButtonIcon(button, isCopied) {
+      let glyph = button.querySelector('.mr-document-copy-glyph');
+      if (!glyph) {
+        glyph = document.createElement('span');
+        glyph.setAttribute('aria-hidden', 'true');
+        button.appendChild(glyph);
+      }
+      glyph.className = isCopied
+        ? 'mr-document-copy-glyph mr-document-copy-glyph-copied'
+        : 'mr-document-copy-glyph';
+    },
+
     /// 幂等创建内容区复制按钮。元素追加到 #mr-content 外部（document.body），
     /// position: fixed 固定于内容视口右上角，不随正文滚动、不被复制进正文。
-    /// 不得随 MR.replaceContent() 删除。
+    /// 不得随 MR.replaceContent() 删除。两个 mask 图标变量不可用时跳过创建。
     addDocumentCopyButton() {
       if (document.getElementById('mr-document-copy-btn')) {
         MR.setDocumentCopyButtonLabels();
         return;
       }
+      if (!MR._documentCopyIconsAvailable()) return;
+
       const preview = document.querySelector('.markdown-preview');
       const normalTitle = (preview && preview.dataset.documentCopyTitle) || 'Copy Content';
       const btn = document.createElement('button');
@@ -509,7 +531,7 @@
       btn.type = 'button';
       btn.title = normalTitle;
       btn.setAttribute('aria-label', normalTitle);
-      btn.innerHTML = MR._documentCopyIcon;
+      MR.setDocumentCopyButtonIcon(btn, false);
       btn.dataset.normalTitle = normalTitle;
       btn.dataset.copiedTitle = (preview && preview.dataset.documentCopiedTitle) || 'Content Copied';
 
@@ -522,13 +544,13 @@
           MR._documentCopyTimer = null;
         }
         btn.classList.add('mr-document-copy-btn-copied');
-        btn.innerHTML = MR._documentCopiedIcon;
+        MR.setDocumentCopyButtonIcon(btn, true);
         btn.title = btn.dataset.copiedTitle;
         btn.setAttribute('aria-label', btn.dataset.copiedTitle);
         MR._documentCopyTimer = setTimeout(() => {
           MR._documentCopyTimer = null;
           btn.classList.remove('mr-document-copy-btn-copied');
-          btn.innerHTML = MR._documentCopyIcon;
+          MR.setDocumentCopyButtonIcon(btn, false);
           btn.title = btn.dataset.normalTitle;
           btn.setAttribute('aria-label', btn.dataset.normalTitle);
         }, 5000);
