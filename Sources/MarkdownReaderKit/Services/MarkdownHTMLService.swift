@@ -47,7 +47,7 @@ public enum MarkdownHTMLService {
         )
     }
 
-    public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "") -> String {
+    public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "", documentCopyWebIcons: DocumentCopyWebIcons = .unavailable) -> String {
         buildFullHTML(
             renderResult: render(content, baseURL: baseURL),
             themeCSS: themeCSS,
@@ -56,16 +56,18 @@ public enum MarkdownHTMLService {
             baseURL: baseURL,
             isDark: isDark,
             documentCopyTitle: documentCopyTitle,
-            documentCopiedTitle: documentCopiedTitle
+            documentCopiedTitle: documentCopiedTitle,
+            documentCopyWebIcons: documentCopyWebIcons
         )
     }
 
     /// 以已有 `RenderResult` 装配完整 HTML 页面壳。不接收原始 Markdown，也不再次调用
     /// `render`，仅供调用方（如 WebView 完整加载）复用单次解析结果，避免重复 Markdown 预处理与解析。
-    public static func buildFullHTML(renderResult: RenderResult, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "") -> String {
+    public static func buildFullHTML(renderResult: RenderResult, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "", documentCopyWebIcons: DocumentCopyWebIcons = .unavailable) -> String {
         let baseURLAttr = baseURL != nil ? " data-base-url=\"\(baseURL!.path.addingXMLAttributeEscapes)\"" : ""
         let copyTitleAttr = " data-document-copy-title=\"\(documentCopyTitle.addingXMLAttributeEscapes)\""
         let copiedTitleAttr = " data-document-copied-title=\"\(documentCopiedTitle.addingXMLAttributeEscapes)\""
+        let copyIconVars = documentCopyWebIcons.cssFragment
 
         return """
         <!DOCTYPE html>
@@ -78,7 +80,7 @@ public enum MarkdownHTMLService {
             <link rel="stylesheet" href="mr:///css/katex.min.css">
             <style id="mr-theme-style">\(themeCSS)</style>
             <style>
-            :root { --content-padding: \(contentPadding)px; --content-max-width: \(maxContentWidthFollowsWindow ? "none" : "980px"); }
+            :root { \(copyIconVars) --content-padding: \(contentPadding)px; --content-max-width: \(maxContentWidthFollowsWindow ? "none" : "980px"); }
             </style>
         </head>
         <body>
