@@ -14,6 +14,12 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.2.7] - 2026-08-12
+
+### 优化
+
+- **完整加载时消除重复 Markdown 渲染**：渲染模式完整加载（`loadContent()`）此前对同一份 Markdown 调用了两次 `MarkdownHTMLService.render`——一次在 `buildFullHTML` 内部装配页面壳，一次仅为写入从未被读取的 `currentHeadings`。后者额外执行 Markdown 预处理、Document 解析与 formatter 遍历，对功能无贡献。新增 `buildFullHTML(renderResult:...)` 重载，`loadContent()` 先渲染一次再复用结果；旧 `buildFullHTML(content:...)` 签名保留兼容，内部也只渲染一次。HTML 模板、属性转义、CSS/JS 顺序、copy-button 合同逐字不变。同时删除从未被读取的 `currentHeadings` 与 `lastLoadedURL` 状态，并补充 `MarkdownHTMLServiceTests` 覆盖新旧入口的输出合同
+
 ## [2.2.6] - 2026-08-12
 
 ### 修复
