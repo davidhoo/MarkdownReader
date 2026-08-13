@@ -107,49 +107,60 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
         )
         logger.info("Document copy snapshot: enabled=\(settings.isDocumentCopyEnabled), format=\(settings.format.rawValue), language=\(settings.language.rawValue)")
 
-        // SF Symbol mask 图标：主阅读与 Quick Look 共用同一提供者。
-        // 必须在主线程栅格化；preparePreviewOfFile 可能不在主线程，故在主线程 closure 内取。
         let copyTitle = L10n.tr(.contentCopy, language: settings.language)
         let copiedTitle = L10n.tr(.contentCopied, language: settings.language)
         let rawPayload = settings.format == .rawMarkdown ? content : nil
 
+        // HTML 必须在 security-scoped access 仍有效时构建：buildContentAwareHTML(inlineImages: true)
+        // 会用 Data(contentsOf:) 读取同目录图片并转 base64。作用域在 defer 处释放，
+        // 因此整个 HTML 生成留在同步段，与原结构一致。只有 SF Symbol 图标栅格化（必须主线程）
+        // 与 webView.loadHTMLString 推迟到 async 闭包；图标取到后再注入 mask CSS 变量。
+        let baseConfiguration = DocumentCopyPageConfiguration(
+            isEnabled: settings.isDocumentCopyEnabled,
+            format: settings.format,
+            rawMarkdown: rawPayload,
+            copyTitle: copyTitle,
+            copiedTitle: copiedTitle,
+            webIcons: .unavailable
+        )
+
+        let html = MarkdownHTMLService.buildContentAwareHTML(
+            content: content,
+            themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
+            contentPadding: 20,
+            baseURL: dirURL,
+            isDark: isDark,
+            hasMermaid: hasMermaid,
+            hasKaTeX: hasKaTeX,
+            inlineImages: true,
+            documentCopyConfiguration: baseConfiguration
+        )
+
+        // 诊断日志：检查 HTML 中是否包含 data: URL（内联图片成功）
+        let hasInlineData = html.contains("data:image/")
+        let hasMrScheme = html.contains("mr:///")
+        let hasRawPath = html.contains("screenshot.png") && !html.contains("data:image/") && !html.contains("mr:///")
+        logger.info("HTML generated, length: \(html.count), hasInlineData: \(hasInlineData), hasMrScheme: \(hasMrScheme), hasRawPath: \(hasRawPath)")
+
+        // 输出 HTML 前 2000 字符用于调试
+        logger.debug("HTML preview: \(html.prefix(2000))")
+
+        let baseURL = url.deletingLastPathComponent()
+        let needsIcons = settings.isDocumentCopyEnabled
+
         let weakSelf = self
         DispatchQueue.main.async {
-            let webIcons = MainActor.assumeIsolated {
-                SFSymbolWebImageProvider.shared.documentCopyWebIcons(displayScale: weakSelf.webView?.window?.backingScaleFactor ?? 2)
+            // SF Symbol mask 图标必须主线程栅格化。仅当启用内容复制时取；不可用时按钮安全 no-op。
+            // 取得后把 mask CSS 变量注入已生成 HTML 的 :root，不重新解析 Markdown、不重读图片。
+            let finalHTML: String
+            if needsIcons {
+                let webIcons = MainActor.assumeIsolated {
+                    SFSymbolWebImageProvider.shared.documentCopyWebIcons(displayScale: weakSelf.webView?.window?.backingScaleFactor ?? 2)
+                }
+                finalHTML = Self.injectDocumentCopyIcons(into: html, webIcons: webIcons)
+            } else {
+                finalHTML = html
             }
-
-            let documentCopyConfiguration = DocumentCopyPageConfiguration(
-                isEnabled: settings.isDocumentCopyEnabled,
-                format: settings.format,
-                rawMarkdown: rawPayload,
-                copyTitle: copyTitle,
-                copiedTitle: copiedTitle,
-                webIcons: webIcons
-            )
-
-            let html = MarkdownHTMLService.buildContentAwareHTML(
-                content: content,
-                themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
-                contentPadding: 20,
-                baseURL: dirURL,
-                isDark: isDark,
-                hasMermaid: hasMermaid,
-                hasKaTeX: hasKaTeX,
-                inlineImages: true,
-                documentCopyConfiguration: documentCopyConfiguration
-            )
-
-            // 诊断日志：检查 HTML 中是否包含 data: URL（内联图片成功）
-            let hasInlineData = html.contains("data:image/")
-            let hasMrScheme = html.contains("mr:///")
-            let hasRawPath = html.contains("screenshot.png") && !html.contains("data:image/") && !html.contains("mr:///")
-            logger.info("HTML generated, length: \(html.count), hasInlineData: \(hasInlineData), hasMrScheme: \(hasMrScheme), hasRawPath: \(hasRawPath)")
-
-            // 输出 HTML 前 2000 字符用于调试
-            logger.debug("HTML preview: \(html.prefix(2000))")
-
-            let baseURL = url.deletingLastPathComponent()
 
             guard let webView = weakSelf.webView else {
                 logger.error("webView is nil — viewDidLoad not called yet")
@@ -169,13 +180,27 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
                 webView.underPageBackgroundColor = NSColor(red: 0.094, green: 0.094, blue: 0.102, alpha: 1.0)
             }
 
-            webView.loadHTMLString(html, baseURL: baseURL)
+            webView.loadHTMLString(finalHTML, baseURL: baseURL)
 
             let timeout: TimeInterval = hasMermaid ? 2.0 : 1.0
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
                 navDelegate.forceCompleteIfPending()
             }
         }
+    }
+
+    /// 把 SF Symbol mask CSS 变量注入已生成 HTML 的 `:root`。
+    ///
+    /// HTML 在安全作用域内用 `webIcons: .unavailable` 构建（无 mask 变量）。
+    /// 图标栅格化必须主线程，故在 async 闭包取到后，把 `cssFragment` 插入首个
+    /// `:root { ... }` 的开括号后。不可用时直接返回原 HTML（按钮 no-op）。
+    /// 只做字符串替换，不重新解析 Markdown、不重读图片。
+    nonisolated static func injectDocumentCopyIcons(into html: String, webIcons: DocumentCopyWebIcons) -> String {
+        guard webIcons.isAvailable else { return html }
+        let fragment = webIcons.cssFragment
+        guard let rootRange = html.range(of: ":root {") else { return html }
+        let insertPos = rootRange.upperBound
+        return html.replacingCharacters(in: insertPos..<insertPos, with: " \(fragment)")
     }
 
     // MARK: - CFPreferences 类型桥接
