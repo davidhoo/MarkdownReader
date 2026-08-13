@@ -12,6 +12,7 @@ import MarkdownReaderKit
 struct GeneralSettingsView: View {
     @Bindable var settings: SettingsModel
     let language: Language
+    @Environment(\.themeColors) private var themeColors
     @State private var showSetDefaultFailed = false
     @State private var isSettingDefault = false
     @State private var isTogglingCommandLine = false
@@ -161,18 +162,26 @@ struct GeneralSettingsView: View {
 
                 // 总开关打开时，在启用 Toggle 下方显示 Quick Look 复制格式选择器；
                 // Quick Look Preview 自身关闭时，格式选择仍显示并保留已选值。
+                // 标签与 segmented picker 分行：避免长标签被固定宽度 picker 截断成多行。
                 if settings.enableDocumentCopy {
-                    Picker(
-                        L10n.tr(.settingsGeneralQuickLookCopyFormat, language: language),
-                        selection: $settings.quickLookDocumentCopyFormat
-                    ) {
-                        Text(L10n.tr(.quickLookCopyFormatRichText, language: language))
-                            .tag(QuickLookDocumentCopyFormat.richText)
-                        Text(L10n.tr(.quickLookCopyFormatRawMarkdown, language: language))
-                            .tag(QuickLookDocumentCopyFormat.rawMarkdown)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(L10n.tr(.settingsGeneralQuickLookCopyFormat, language: language))
+                            .font(.system(size: 12))
+                            .foregroundStyle(themeColors.fgMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Picker(
+                            "",
+                            selection: $settings.quickLookDocumentCopyFormat
+                        ) {
+                            Text(L10n.tr(.quickLookCopyFormatRichText, language: language))
+                                .tag(QuickLookDocumentCopyFormat.richText)
+                            Text(L10n.tr(.quickLookCopyFormatRawMarkdown, language: language))
+                                .tag(QuickLookDocumentCopyFormat.rawMarkdown)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 260)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 260)
                 }
             }
 
