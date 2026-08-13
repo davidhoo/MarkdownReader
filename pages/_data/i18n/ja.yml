@@ -36,6 +36,8 @@ feature_pdf_title: "PDF 書き出し"
 feature_pdf_desc: "レンダリング済み Markdown をワンクリックで PDF に書き出し。テーマスタイルを保持し、共有とアーカイブに便利。"
 feature_command_palette_title: "コマンドパレット"
 feature_command_palette_desc: "⌘P でファジーマッチによるファイル検索とキーボードナビゲーションで素早くファイルを開けます。"
+feature_document_copy_title: "文書をワンクリックでコピー"
+feature_document_copy_desc: "文書全体をワンクリックでコピー。設定で無効化でき、Quick Look ではリッチテキストまたは元の Markdown を選べます。"
 
 # Themes
 themes_title: "33 テーマ、自由に切替"
@@ -148,6 +150,8 @@ feat_ql_title: "Quick Look プレビュー"
 feat_ql_desc: "Finder で .md ファイルを選択してスペースキーを押すとプレビュー。設定 → 一般 → Quick Look プレビュー で有効化してください。"
 feat_export_title: "PDF 書き出し"
 feat_export_desc: "⌥⌘E または ファイル → PDF 書き出し メニューで、レンダリング内容を PDF ファイルとして書き出し。現在のテーマスタイルを保持。"
+feat_document_copy_title: "文書をワンクリックでコピー"
+feat_document_copy_desc: "レンダリングモード、ソースモード、Quick Look のいずれからでも文書全体をワンクリックでコピーできます。設定 → 一般 のスイッチ一つで三つのコピー入口をまとめて無効化できます。Quick Look ではリッチテキストまたは元の Markdown を選択してコピーできます。"
 
 help_faq_title: "よくある質問"
 help_faq_subtitle: "問題がありますか？まずここを確認"

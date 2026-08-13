@@ -36,6 +36,8 @@ feature_pdf_title: "Export PDF"
 feature_pdf_desc: "One-click export rendered Markdown to PDF, preserving theme styles for easy sharing and archiving."
 feature_command_palette_title: "Command Palette"
 feature_command_palette_desc: "Press ⌘P to quickly search and open files with fuzzy matching and keyboard navigation."
+feature_document_copy_title: "Copy Document Content"
+feature_document_copy_desc: "Copy an entire document in one click. Turn it off in Settings; Quick Look supports rich text or raw Markdown."
 
 # Themes
 themes_title: "33 Themes, Switch Freely"
@@ -148,6 +150,8 @@ feat_ql_title: "Quick Look Preview"
 feat_ql_desc: "Select a .md file in Finder and press Space to preview rendered content. Enable in Settings → General → Quick Look Preview."
 feat_export_title: "Export PDF"
 feat_export_desc: "Press ⌥⌘E or use File → Export PDF to export rendered content as a PDF file, preserving the current theme style."
+feat_document_copy_title: "Copy Document Content"
+feat_document_copy_desc: "Copy an entire document from rendered mode, source mode, or Quick Look in one click. A single toggle in Settings → General turns off all three copy entry points. In Quick Look, choose to copy as rich text or raw Markdown."
 
 help_faq_title: "FAQ"
 help_faq_subtitle: "Having issues? Check here first"
