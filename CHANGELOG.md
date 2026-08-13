@@ -14,6 +14,39 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.2.9] - 2026-08-13
+
+### 新增
+
+- **内容一键复制总开关与 Quick Look 复制格式**：主阅读、Raw 编辑、Quick Look 三处整篇内容复制此前各自硬编码启用，无法统一关闭。新增设置项「内容一键复制」总开关（默认开启，仅在新 key 缺失时写入 true，绝不覆盖已有用户值），控制三处复制按钮的显隐与可点击；Quick Look 预览额外提供复制格式选择（富文本 / 原始 Markdown 文本），富文本复制渲染结构（标题、强调、表格、代码），原始 Markdown 复制文件 UTF-8 原文逐字保真
+  - 主应用与 Quick Look Extension 跨进程共享同一组偏好 key：新增 `SharedPreferenceKey` 集中 applicationID 与 4 个跨进程 key（`languagePref` / `enableQuickLookPreview` / `enableDocumentCopy` / `quickLookDocumentCopyFormat`），`SettingsModel` 改引用共享 key，消除两处 key 字符串重复。Extension 经 `CFPreferencesCopyAppValue` 从主应用 preference 域读取，缺失/无效值回退 Kit 兼容默认（总开关 true、格式 richText、语言 auto 用检测语言）
+  - 新增 `DocumentCopyConfiguration`（Kit）：`QuickLookDocumentCopyFormat` 枚举、`SharedPreferenceKey`、`QuickLookDocumentCopySettings`（值类型快照，解析逻辑收敛在 Kit，Provider 仅做 Bool/String 类型桥接）、`DocumentCopyPageConfiguration`（统一 enabled/格式/raw payload/文案/SF Symbol mask 图标的页面合同，`disabled` 静态默认保护 PDF 导出与未迁移入口）
+  - `MarkdownHTMLService` 两个页面壳入口（`buildFullHTML` / `buildContentAwareHTML`）改为接收 `DocumentCopyPageConfiguration`，disabled 配置不输出任何复制属性、raw base64 或 mask 变量；enabled 配置输出 `data-document-copy-enabled` / `data-document-copy-format` / title/aria 文案，仅 rawMarkdown 格式且原文非空时输出 base64（ASCII 但仍做 XML 属性转义）
+  - JS 侧 `addDocumentCopyButton` 改为仅在 `.markdown-preview[data-document-copy-enabled="true"]` 时创建，保护 PDF/打印与总开关关闭场景；新增 `setDocumentCopyButtonEnabled`（无重载增删按钮：关闭 clear timer + remove，开启幂等创建）、`copyRawMarkdownContent`（临时 textarea + execCommand 复制纯文本，decode/复制失败返回 false 不显示成功反馈）、`decodeUTF8Base64`（atob + TextDecoder('utf-8') 保证中文/emoji 字节保真）
+  - 总开关运行时切换走无重载 JS bridge（`MR.setDocumentCopyButtonEnabled`），不触发 requestRender/page.load/MR.replaceContent；语言变化走 `MR.setDocumentCopyButtonLabels` 更新 DOM 标签
+  - 设置页新增「内容一键复制」分区与 Quick Look 复制格式分段选择器（总开关开启时显示）；Raw 模式内容区右上角原生复制按钮与渲染页按钮一同遵从总开关
+  - 总开关关闭立即取消五秒任务并清除对号，避免关闭再开启后复活旧成功态
+  - `L10n` 新增 5 个三语文案（zh-Hans / zh-Hant / en）
+
+### 优化
+
+- **可选运行时按需加载**：主阅读页此前对每份普通 Markdown 无条件写入 `mermaid.min.js`（约 3.2 MB）、`katex.min.js`（约 272 KB）、`katex.min.css`（约 24 KB），即使正文无图表/公式也承担解析与内存成本。新增 `MarkdownHTMLService.MarkdownRuntimeRequirements` 值类型，从单次 `RenderResult.html` 推导需求（`class="language-mermaid"` → Mermaid；`class="language-math"` / `language-latex` / `language-katex` 任一 → KaTeX，自动覆盖 `$...$` / `$$...$$` 预处理产物），`buildFullHTML(renderResult:...)` 按需求条件装配可选资源标签，默认 `.all` 保持与历史完整页面合同一致以保护 Raw PDF 等未迁移调用方；Prism、autoloader、`markdown-reader.js` 始终加载
+  - 增量内容替换前对单次解析结果检测需求，与已加载需求比较：需求变化（新出现图表/公式，或反向消失）提升为整页加载（已加载库无法卸载），需求不变沿用既有 latest-wins 增量替换。新增纯策略 `WebViewRuntimePolicy.action(current:next:)`（current 为 nil → loadPage；相同 → replaceContent；不同 → loadPage）
+  - `WebViewWarmupService.warmupHTML` 仅保留 `markdown.css`、Prism、autoloader 与 `markdown-reader.js`，不再抢先载入 Mermaid/KaTeX；首次打开含图表/公式的文档按文档自身需求加载可选库
+
+### 修复
+
+- **Quick Look 内联图片读取留在 security-scoped access 内**：`preparePreviewOfFile` 此前在 `DispatchQueue.main.async` 闭包内才调用 `buildContentAwareHTML(inlineImages: true)`，此时 `url`/`dirURL` 的 security-scoped access 已在 `defer` 释放，导致同目录图片 `Data(contentsOf:)` 读取失败、内联 base64 缺失。改为在同步段、安全作用域仍有效时完成 HTML 生成（含图片读取）；仅 SF Symbol 图标栅格化（必须主线程）与 `webView.loadHTMLString` 推迟到 async 闭包，取到图标后通过 `injectDocumentCopyIcons(into:webIcons:)` 把 mask CSS 变量插入已生成 HTML 的首个 `:root {` 开括号后，不重新解析 Markdown、不重读图片
+
+### 测试
+
+- 新增 `QuickLookDocumentCopySettingsTests`：缺失值保持富文本、未知格式回退、有效 rawMarkdown 保留、auto/缺失语言偏好用检测语言
+- 新增 `MarkdownHTMLServiceTests` 运行时需求与按需装配用例：普通 Markdown 不加载可选运行时、Mermaid/单美元 math 检测、latex 围栏块、混合检测、`buildFullHTML` 按需省略/默认全量/仅 Mermaid/仅 KaTeX
+- 扩展 `DocumentCopyWebIconsTests`：disabled 不输出复制属性/payload/mask 变量、enabled richText 输出属性与 mask 变量与转义文案、rawMarkdown 输出 base64 而非原文、`buildContentAwareHTML` 同合同与默认 disabled
+- 扩展 `WebViewRenderSchedulerTests`：需求不变保持增量替换、新增 KaTeX 提升整页、移除 Mermaid 提升整页、current 为 nil 强制整页
+- 扩展 `AppStartupCoordinatorTests`：`warmupHTML` 仅基础运行时不含 Mermaid/KaTeX
+- 全部 195 个测试通过
+
 ## [2.2.8] - 2026-08-12
 
 ### 优化
