@@ -36,19 +36,32 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
     }
 
     nonisolated func preparePreviewOfFile(at url: URL, completionHandler handler: @escaping @Sendable (Error?) -> Void) {
-        let keyExists = UnsafeMutablePointer<DarwinBoolean>.allocate(capacity: 1)
-        defer { keyExists.deallocate() }
-        let enabled = CFPreferencesGetAppBooleanValue(
-            "com.markdownreader.enableQuickLookPreview" as CFString,
-            "com.markdownreader.app" as CFString,
-            keyExists
-        )
-        let isEnabled = keyExists.pointee.boolValue ? enabled : true
+        // Quick Look Extension 运行在独立进程，从主应用 preference 域读取共享设置快照。
+        // Provider 仅作 Bool/String 类型桥接；key、默认值与解析逻辑收敛在 Kit。
+        let appID = SharedPreferenceKey.applicationID as CFString
+        let enableQLKey = SharedPreferenceKey.enableQuickLookPreview as CFString
+        let enableCopyKey = SharedPreferenceKey.enableDocumentCopy as CFString
+        let formatKey = SharedPreferenceKey.quickLookDocumentCopyFormat as CFString
+        let languagePrefKey = SharedPreferenceKey.languagePref as CFString
 
-        guard isEnabled else {
+        let quickLookEnabled = Self.cfPreferenceBool(
+            key: enableQLKey,
+            applicationID: appID,
+            keyExistsDefault: true
+        )
+        guard quickLookEnabled else {
             handler(NSError(domain: "com.markdownreader.app.QuickLook", code: 1, userInfo: [NSLocalizedDescriptionKey: "Quick Look preview is disabled"]))
             return
         }
+
+        let enableDocumentCopy = Self.cfPreferenceBool(
+            key: enableCopyKey,
+            applicationID: appID,
+            keyExistsDefault: true
+        )
+        let storedFormat = Self.cfPreferenceString(key: formatKey, applicationID: appID)
+        let storedLanguagePref = Self.cfPreferenceString(key: languagePrefKey, applicationID: appID)
+        let detectedLanguage = LanguageService.detectLanguage()
 
         // 对文件及其所在目录获取 security-scoped access，
         // 确保内联图片（base64）时可以读取同目录下的图片文件
@@ -85,30 +98,59 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
         logger.info("Directory URL: \(dirURL.path)")
         logger.info("fileAccessing: \(fileAccessing), dirAccessing: \(dirAccessing)")
 
-        let html = MarkdownHTMLService.buildContentAwareHTML(
-            content: content,
-            themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
-            contentPadding: 20,
-            baseURL: dirURL,
-            isDark: isDark,
-            hasMermaid: hasMermaid,
-            hasKaTeX: hasKaTeX,
-            inlineImages: true
+        // 解析设置快照：仅决定 Quick Look 复制格式与总开关；缺失值回退 Kit 兼容默认。
+        let settings = QuickLookDocumentCopySettings(
+            storedDocumentCopyEnabled: enableDocumentCopy,
+            storedFormatRawValue: storedFormat,
+            storedLanguagePrefRawValue: storedLanguagePref,
+            detectedLanguage: detectedLanguage
         )
+        logger.info("Document copy snapshot: enabled=\(settings.isDocumentCopyEnabled), format=\(settings.format.rawValue), language=\(settings.language.rawValue)")
 
-        // 诊断日志：检查 HTML 中是否包含 data: URL（内联图片成功）
-        let hasInlineData = html.contains("data:image/")
-        let hasMrScheme = html.contains("mr:///")
-        let hasRawPath = html.contains("screenshot.png") && !html.contains("data:image/") && !html.contains("mr:///")
-        logger.info("HTML generated, length: \(html.count), hasInlineData: \(hasInlineData), hasMrScheme: \(hasMrScheme), hasRawPath: \(hasRawPath)")
-
-        // 输出 HTML 前 2000 字符用于调试
-        logger.debug("HTML preview: \(html.prefix(2000))")
-
-        let baseURL = url.deletingLastPathComponent()
+        // SF Symbol mask 图标：主阅读与 Quick Look 共用同一提供者。
+        // 必须在主线程栅格化；preparePreviewOfFile 可能不在主线程，故在主线程 closure 内取。
+        let copyTitle = L10n.tr(.contentCopy, language: settings.language)
+        let copiedTitle = L10n.tr(.contentCopied, language: settings.language)
+        let rawPayload = settings.format == .rawMarkdown ? content : nil
 
         let weakSelf = self
         DispatchQueue.main.async {
+            let webIcons = MainActor.assumeIsolated {
+                SFSymbolWebImageProvider.shared.documentCopyWebIcons(displayScale: weakSelf.webView?.window?.backingScaleFactor ?? 2)
+            }
+
+            let documentCopyConfiguration = DocumentCopyPageConfiguration(
+                isEnabled: settings.isDocumentCopyEnabled,
+                format: settings.format,
+                rawMarkdown: rawPayload,
+                copyTitle: copyTitle,
+                copiedTitle: copiedTitle,
+                webIcons: webIcons
+            )
+
+            let html = MarkdownHTMLService.buildContentAwareHTML(
+                content: content,
+                themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
+                contentPadding: 20,
+                baseURL: dirURL,
+                isDark: isDark,
+                hasMermaid: hasMermaid,
+                hasKaTeX: hasKaTeX,
+                inlineImages: true,
+                documentCopyConfiguration: documentCopyConfiguration
+            )
+
+            // 诊断日志：检查 HTML 中是否包含 data: URL（内联图片成功）
+            let hasInlineData = html.contains("data:image/")
+            let hasMrScheme = html.contains("mr:///")
+            let hasRawPath = html.contains("screenshot.png") && !html.contains("data:image/") && !html.contains("mr:///")
+            logger.info("HTML generated, length: \(html.count), hasInlineData: \(hasInlineData), hasMrScheme: \(hasMrScheme), hasRawPath: \(hasRawPath)")
+
+            // 输出 HTML 前 2000 字符用于调试
+            logger.debug("HTML preview: \(html.prefix(2000))")
+
+            let baseURL = url.deletingLastPathComponent()
+
             guard let webView = weakSelf.webView else {
                 logger.error("webView is nil — viewDidLoad not called yet")
                 handler(NSError(domain: "com.markdownreader.app.QuickLook", code: 2, userInfo: [NSLocalizedDescriptionKey: "WebView not initialized"]))
@@ -134,6 +176,29 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
                 navDelegate.forceCompleteIfPending()
             }
         }
+    }
+
+    // MARK: - CFPreferences 类型桥接
+
+    /// 从主应用 preference 域读 Bool。Provider 不写默认值、不用自己的 bundle id。
+    /// `keyExistsDefault` 为 key 缺失时的回退（启用类设置默认 true，与主应用一致）。
+    nonisolated static func cfPreferenceBool(
+        key: CFString,
+        applicationID: CFString,
+        keyExistsDefault: Bool
+    ) -> Bool {
+        let keyExists = UnsafeMutablePointer<DarwinBoolean>.allocate(capacity: 1)
+        defer { keyExists.deallocate() }
+        let value = CFPreferencesGetAppBooleanValue(key, applicationID, keyExists)
+        return keyExists.pointee.boolValue ? value : keyExistsDefault
+    }
+
+    /// 从主应用 preference 域读 String。缺失或类型不符返回 nil。
+    nonisolated static func cfPreferenceString(key: CFString, applicationID: CFString) -> String? {
+        guard let raw = CFPreferencesCopyAppValue(key, applicationID) else { return nil }
+        if let str = raw as? String { return str }
+        // NSNumber/CFNumber 等非字符串值视为缺失，避免误用。
+        return nil
     }
 
     private nonisolated static func resolveResourceSearchPaths() -> [URL] {

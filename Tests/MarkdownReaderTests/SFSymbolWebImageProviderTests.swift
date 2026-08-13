@@ -1,7 +1,7 @@
 import AppKit
 import MarkdownReaderKit
+@testable import MarkdownReaderKit
 import XCTest
-@testable import MarkdownReader
 
 /// SF Symbol → 透明 PNG → data URL 提供者单测。
 ///
