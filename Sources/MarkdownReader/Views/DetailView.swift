@@ -690,10 +690,12 @@ struct DetailView: View {
         .animation(.easeInOut(duration: 0.2), value: appViewModel.isFindBarVisible)
         .overlay(alignment: .topTrailing) {
             // 编辑模式内容区右上角原生复制按钮。
-            // 仅 raw 模式 + 有文档 + 查找栏关闭时显示，避免与查找栏浮层重叠。
+            // 仅 raw 模式 + 有文档 + 查找栏关闭 + 内容一键复制总开关开启时显示，
+            // 避免与查找栏浮层重叠，并遵从总开关。
             if documentViewModel.hasDocument
                 && documentViewModel.displayMode == .raw
-                && !appViewModel.isFindBarVisible {
+                && !appViewModel.isFindBarVisible
+                && settings.enableDocumentCopy {
                 Button {
                     copyRawContent()
                 } label: {
@@ -718,6 +720,8 @@ struct DetailView: View {
         // 模式/文件切换：废弃旧文档的复制反馈，防止残留对号。
         .onChange(of: documentViewModel.displayMode) { _, _ in invalidateCopyFeedback() }
         .onChange(of: documentViewModel.currentFileURL) { _, _ in invalidateCopyFeedback() }
+        // 总开关关闭：立即取消五秒任务并清除对号，避免关闭再开启后复活旧成功态。
+        .onChange(of: settings.enableDocumentCopy) { _, _ in invalidateCopyFeedback() }
     }
 
     /// 把 find/reload/exportPDF handler 注册到注入的本窗口命令目标上。

@@ -98,4 +98,15 @@ final class CopyFeedbackStateTests: XCTestCase {
         state.reset(ifCurrent: first)
         XCTAssertFalse(state.isShowingSuccess)
     }
+
+    // MARK: - 关闭总开关立即清除旧对号，防止重开时复活
+
+    func testInvalidateHidesSuccessBeforeAReenabledControlCanAppear() {
+        var state = CopyFeedbackState()
+        _ = state.begin()
+        XCTAssertTrue(state.isShowingSuccess)
+
+        state.invalidate()
+        XCTAssertFalse(state.isShowingSuccess)
+    }
 }

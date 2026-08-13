@@ -516,14 +516,17 @@
     /// 幂等创建内容区复制按钮。元素追加到 #mr-content 外部（document.body），
     /// position: fixed 固定于内容视口右上角，不随正文滚动、不被复制进正文。
     /// 不得随 MR.replaceContent() 删除。两个 mask 图标变量不可用时跳过创建。
+    /// 仅当 .markdown-preview 的 data-document-copy-enabled 为 "true" 时才创建，
+    /// 以保护未启用入口（PDF/打印、总开关关闭）。
     addDocumentCopyButton() {
       if (document.getElementById('mr-document-copy-btn')) {
         MR.setDocumentCopyButtonLabels();
         return;
       }
+      const preview = document.querySelector('.markdown-preview');
+      if (preview && preview.dataset.documentCopyEnabled !== 'true') return;
       if (!MR._documentCopyIconsAvailable()) return;
 
-      const preview = document.querySelector('.markdown-preview');
       const normalTitle = (preview && preview.dataset.documentCopyTitle) || 'Copy Content';
       const btn = document.createElement('button');
       btn.id = 'mr-document-copy-btn';
@@ -536,7 +539,13 @@
       btn.dataset.copiedTitle = (preview && preview.dataset.documentCopiedTitle) || 'Content Copied';
 
       btn.addEventListener('click', function() {
-        const ok = MR.copyRenderedContent();
+        // 按格式选择复制路径：rawMarkdown 用临时 textarea 复制文件原文，
+        // 其余（含主阅读富文本）走 copyRenderedContent 的 selection 路径。
+        // 任一路径返回失败都不显示成功反馈。
+        const format = (preview && preview.dataset.documentCopyFormat) || 'richText';
+        const ok = format === 'rawMarkdown'
+          ? MR.copyRawMarkdownContent(preview && preview.dataset.documentCopyRawBase64)
+          : MR.copyRenderedContent();
         if (!ok) return;
         // 连续点击：clearTimeout 后重新计时，旧计时不会提前恢复复制图标。
         if (MR._documentCopyTimer) {
@@ -557,6 +566,50 @@
       });
 
       document.body.appendChild(btn);
+    },
+
+    /// 总开关变化：无重载地增删按钮。
+    /// 关闭：clear timer + remove 按钮，无成功态/定时器/hit target 残留。
+    /// 开启：幂等创建（addDocumentCopyButton 自身保证只创建一个）。按钮不存在时安全 no-op。
+    setDocumentCopyButtonEnabled(enabled) {
+      const btn = document.getElementById('mr-document-copy-btn');
+      if (!enabled) {
+        if (MR._documentCopyTimer) {
+          clearTimeout(MR._documentCopyTimer);
+          MR._documentCopyTimer = null;
+        }
+        if (btn) btn.remove();
+        return;
+      }
+      MR.addDocumentCopyButton();
+    },
+
+    /// 将 base64 编码的 UTF-8 原始 Markdown 解码为字符串。
+    /// 用 atob 取字节，再以 TextDecoder('utf-8') 解码，保证中文/emoji 字节保真。
+    decodeUTF8Base64(base64) {
+      const bytes = Uint8Array.from(atob(base64), function (ch) { return ch.charCodeAt(0); });
+      return new TextDecoder('utf-8').decode(bytes);
+    },
+
+    /// 复制原始 Markdown 文本：通过临时 textarea + document.execCommand('copy')
+    /// 写入纯文本。payload 缺失或 decode/复制失败返回 false，不显示成功反馈。
+    /// 仅用于 rawMarkdown 格式；不得替换富文本的 selection 复制路径。
+    copyRawMarkdownContent(base64) {
+      if (!base64) return false;
+      const textarea = document.createElement('textarea');
+      try {
+        textarea.value = MR.decodeUTF8Base64(base64);
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        return document.execCommand('copy');
+      } catch (_) {
+        return false;
+      } finally {
+        textarea.remove();
+      }
     },
 
     /// 查找栏显隐同步：查找栏打开时按钮不可见且不接收点击。
