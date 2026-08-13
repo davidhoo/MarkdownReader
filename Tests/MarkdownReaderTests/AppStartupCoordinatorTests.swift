@@ -30,6 +30,18 @@ final class AppStartupCoordinatorTests: TemporaryDirectoryTestCase {
         XCTAssertTrue(second === third, "幂等：始终同一实例")
     }
 
+    // MARK: - 预热资源集：仅基础运行时，不含可选 Mermaid/KaTeX
+
+    func testWarmupHTMLLoadsBaseRuntimeOnly() {
+        let html = WebViewWarmupService.warmupHTML
+
+        XCTAssertTrue(html.contains("mr:///js/prism-core.min.js"))
+        XCTAssertTrue(html.contains("mr:///js/markdown-reader.js"))
+        XCTAssertFalse(html.contains("mr:///js/mermaid.min.js"))
+        XCTAssertFalse(html.contains("mr:///js/katex.min.js"))
+        XCTAssertFalse(html.contains("mr:///css/katex.min.css"))
+    }
+
     // MARK: - 启动优先级：外部请求抑制恢复
 
     func testExternalOpenSuppressesRestoreLastLocation() {

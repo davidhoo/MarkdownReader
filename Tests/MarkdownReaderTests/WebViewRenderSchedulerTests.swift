@@ -1,5 +1,6 @@
 import XCTest
 @testable import MarkdownReader
+import MarkdownReaderKit
 
 /// WebView 渲染触发收敛的纯策略与世代调度测试。
 ///
@@ -16,6 +17,8 @@ final class WebViewRenderSchedulerTests: XCTestCase {
     private func snapshot(_ name: String, content: String, version: Int) -> WebViewRenderSnapshot {
         WebViewRenderSnapshot(fileURL: url(name), content: content, contentVersion: version)
     }
+
+    private typealias MarkdownRuntimeRequirements = MarkdownHTMLService.MarkdownRuntimeRequirements
 
     // MARK: - 策略：渲染动作
 
@@ -106,5 +109,29 @@ final class WebViewRenderSchedulerTests: XCTestCase {
         let first = scheduler.request()
         XCTAssertEqual(first, 1)
         XCTAssertEqual(scheduler.generation, 1)
+    }
+
+    // MARK: - 运行时升级策略：可选运行时需求变化必须整页加载
+
+    func testUnchangedRuntimeRequirementsKeepIncrementalReplacement() {
+        let plain = MarkdownRuntimeRequirements(requiresMermaid: false, requiresKaTeX: false)
+        XCTAssertEqual(WebViewRuntimePolicy.action(current: plain, next: plain), .replaceContent)
+    }
+
+    func testAddingKaTeXPromotesReplacementToFullPageLoad() {
+        let plain = MarkdownRuntimeRequirements(requiresMermaid: false, requiresKaTeX: false)
+        let math = MarkdownRuntimeRequirements(requiresMermaid: false, requiresKaTeX: true)
+        XCTAssertEqual(WebViewRuntimePolicy.action(current: plain, next: math), .loadPage)
+    }
+
+    func testRemovingMermaidPromotesReplacementToFullPageLoad() {
+        let mermaid = MarkdownRuntimeRequirements(requiresMermaid: true, requiresKaTeX: false)
+        let plain = MarkdownRuntimeRequirements(requiresMermaid: false, requiresKaTeX: false)
+        XCTAssertEqual(WebViewRuntimePolicy.action(current: mermaid, next: plain), .loadPage)
+    }
+
+    func testNilCurrentRequirementsForcesFullPageLoad() {
+        let next = MarkdownRuntimeRequirements(requiresMermaid: false, requiresKaTeX: false)
+        XCTAssertEqual(WebViewRuntimePolicy.action(current: nil, next: next), .loadPage)
     }
 }

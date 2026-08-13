@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownReaderKit
 
 /// WebView 渲染触发的最终状态快照。
 ///
@@ -57,5 +58,22 @@ struct WebViewRenderScheduler {
     /// 该世代是否仍为最新请求。旧世代在 `request()` 后立即失效。
     func accepts(_ generation: UInt) -> Bool {
         generation == self.generation
+    }
+}
+
+/// 纯运行时升级策略：依据“已加载运行时需求”与“下一份 HTML 的运行时需求”选择渲染动作。
+///
+/// 与 SwiftUI/WebKit 无关，以便单元测试锁定规则：
+/// - `current == nil`（尚未整页加载）：`.loadPage`；
+/// - 新旧需求相同：`.replaceContent`（沿用既有 latest-wins 增量替换）；
+/// - 需求不同：`.loadPage`（新出现的图表/公式需对应脚本，已加载库无法卸载，必须整页重建）。
+///
+/// 该策略只判断运行时需求，不替代 `WebViewRenderPolicy` 的 `fileURL` / `contentVersion` 决策。
+enum WebViewRuntimePolicy {
+    static func action(
+        current: MarkdownHTMLService.MarkdownRuntimeRequirements?,
+        next: MarkdownHTMLService.MarkdownRuntimeRequirements
+    ) -> WebViewRenderAction {
+        current == next ? .replaceContent : .loadPage
     }
 }
