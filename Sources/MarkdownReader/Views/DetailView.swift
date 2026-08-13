@@ -643,6 +643,7 @@ struct DetailView: View {
                     scrollToLine: documentViewModel.scrollToLineRequest,
                     themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
                     isDark: settings.resolvedThemeType == .dark,
+                    documentCopyEnabled: settings.enableDocumentCopy,
                     searchQuery: findReplaceViewModel.searchText,
                     searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
                     searchWholeWord: findReplaceViewModel.isWholeWord,

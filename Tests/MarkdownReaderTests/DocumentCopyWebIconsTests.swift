@@ -57,6 +57,14 @@ final class DocumentCopyWebIconsTests: XCTestCase {
             copyMaskDataURL: "data:image/png;base64,Y29weQ==",
             copiedMaskDataURL: "data:image/png;base64,Y2hlY2s="
         )
+        let configuration = DocumentCopyPageConfiguration(
+            isEnabled: true,
+            format: .richText,
+            rawMarkdown: nil,
+            copyTitle: "Copy",
+            copiedTitle: "Copied",
+            webIcons: icons
+        )
 
         let html = MarkdownHTMLService.buildFullHTML(
             renderResult: result,
@@ -64,9 +72,7 @@ final class DocumentCopyWebIconsTests: XCTestCase {
             contentPadding: 20,
             baseURL: nil,
             isDark: true,
-            documentCopyTitle: "Copy",
-            documentCopiedTitle: "Copied",
-            documentCopyWebIcons: icons
+            documentCopyConfiguration: configuration
         )
 
         XCTAssertTrue(html.contains("--mr-document-copy-icon:"))
@@ -83,9 +89,7 @@ final class DocumentCopyWebIconsTests: XCTestCase {
             themeCSS: "--ink: #ffffff;",
             contentPadding: 20,
             baseURL: nil,
-            isDark: true,
-            documentCopyTitle: "Copy",
-            documentCopiedTitle: "Copied"
+            isDark: true
         )
 
         XCTAssertFalse(html.contains("--mr-document-copy-icon"))
@@ -93,18 +97,156 @@ final class DocumentCopyWebIconsTests: XCTestCase {
     }
 
     func testPDFConvenienceEntranceDefaultsToUnavailable() {
-        // PDF 便利入口仍可不传 Web 图标，且不输出 mask 变量。
+        // PDF 便利入口仍可不传配置，且不输出 mask 变量与复制属性。
         let html = MarkdownHTMLService.buildFullHTML(
             content: "# Heading",
             themeCSS: "--ink: #000000;",
             contentPadding: 16,
             baseURL: nil,
-            isDark: false,
-            documentCopyTitle: "Copy",
-            documentCopiedTitle: "Copied"
+            isDark: false
         )
 
         XCTAssertFalse(html.contains("--mr-document-copy-icon"))
         XCTAssertFalse(html.contains("--mr-document-copied-icon"))
+        XCTAssertFalse(html.contains("data-document-copy-enabled"))
+    }
+
+    // MARK: - DocumentCopyPageConfiguration 页面属性合同
+
+    func testDisabledConfigurationEmitsNoCopyAttributesOrPayloadOrMaskVariables() {
+        let result = MarkdownHTMLService.render("# Title")
+
+        let html = MarkdownHTMLService.buildFullHTML(
+            renderResult: result,
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            documentCopyConfiguration: .disabled
+        )
+
+        XCTAssertFalse(html.contains("data-document-copy-enabled"))
+        XCTAssertFalse(html.contains("data-document-copy-format"))
+        XCTAssertFalse(html.contains("data-document-copy-raw-base64"))
+        XCTAssertFalse(html.contains("--mr-document-copy-icon"))
+    }
+
+    func testEnabledRichTextConfigurationEmitsAttributesAndMaskVariablesAndEscapedLabels() {
+        let result = MarkdownHTMLService.render("# Title")
+        let icons = DocumentCopyWebIcons(
+            copyMaskDataURL: "data:image/png;base64,Y29weQ==",
+            copiedMaskDataURL: "data:image/png;base64,Y2hlY2s="
+        )
+        let configuration = DocumentCopyPageConfiguration(
+            isEnabled: true,
+            format: .richText,
+            rawMarkdown: nil,
+            copyTitle: "Copy \"Content\"",
+            copiedTitle: "Content <Copied>",
+            webIcons: icons
+        )
+
+        let html = MarkdownHTMLService.buildFullHTML(
+            renderResult: result,
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            documentCopyConfiguration: configuration
+        )
+
+        XCTAssertTrue(html.contains("data-document-copy-enabled=\"true\""))
+        XCTAssertTrue(html.contains("data-document-copy-format=\"richText\""))
+        // 含引号的标题被 XML 属性转义，不得出现裸引号截断属性。
+        XCTAssertTrue(html.contains("data-document-copy-title=\"Copy &quot;Content&quot;\""))
+        XCTAssertTrue(html.contains("data-document-copied-title=\"Content &lt;Copied&gt;\""))
+        XCTAssertFalse(html.contains("data-document-copy-raw-base64"))
+        XCTAssertTrue(html.contains("--mr-document-copy-icon:"))
+    }
+
+    func testRawMarkdownConfigurationEmitsBase64NotRawContent() {
+        let rawMarkdown = "# 中文标题 🎉\n\n</div><script>alert(1)</script>\n"
+        let result = MarkdownHTMLService.render(rawMarkdown)
+        let configuration = DocumentCopyPageConfiguration(
+            isEnabled: true,
+            format: .rawMarkdown,
+            rawMarkdown: rawMarkdown,
+            copyTitle: "Copy",
+            copiedTitle: "Copied",
+            webIcons: .unavailable
+        )
+
+        let html = MarkdownHTMLService.buildFullHTML(
+            renderResult: result,
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            documentCopyConfiguration: configuration
+        )
+
+        XCTAssertTrue(html.contains("data-document-copy-format=\"rawMarkdown\""))
+        XCTAssertTrue(html.contains("data-document-copy-raw-base64="))
+        // 原始 Markdown 不得直接出现在属性中；危险标签不得未转义出现。
+        XCTAssertFalse(html.contains("data-document-copy-raw-base64=\"</div><script>"))
+        // base64 解码后字节保真：用同一编码反解验证。
+        let attrPattern = "data-document-copy-raw-base64=\""
+        guard let start = html.range(of: attrPattern) else {
+            XCTFail("missing raw-base64 attribute")
+            return
+        }
+        let rest = html[start.upperBound...]
+        guard let endQuote = rest.firstIndex(of: "\"") else {
+            XCTFail("unterminated attribute")
+            return
+        }
+        let base64 = String(html[start.upperBound..<endQuote])
+        let decoded = String(decoding: Data(base64Encoded: base64) ?? Data(), as: UTF8.self)
+        XCTAssertEqual(decoded, rawMarkdown)
+    }
+
+    func testBuildContentAwareHTMLHonorsSameConfigurationContract() {
+        let rawMarkdown = "# QL 原文"
+        let icons = DocumentCopyWebIcons(
+            copyMaskDataURL: "data:image/png;base64,Y29weQ==",
+            copiedMaskDataURL: "data:image/png;base64,Y2hlY2s="
+        )
+        let configuration = DocumentCopyPageConfiguration(
+            isEnabled: true,
+            format: .rawMarkdown,
+            rawMarkdown: rawMarkdown,
+            copyTitle: "Copy",
+            copiedTitle: "Copied",
+            webIcons: icons
+        )
+
+        let html = MarkdownHTMLService.buildContentAwareHTML(
+            content: rawMarkdown,
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            isDark: false,
+            hasMermaid: false,
+            hasKaTeX: false,
+            inlineImages: false,
+            documentCopyConfiguration: configuration
+        )
+
+        XCTAssertTrue(html.contains("data-document-copy-enabled=\"true\""))
+        XCTAssertTrue(html.contains("data-document-copy-format=\"rawMarkdown\""))
+        XCTAssertTrue(html.contains("data-document-copy-raw-base64="))
+        XCTAssertTrue(html.contains("--mr-document-copy-icon:"))
+    }
+
+    func testBuildContentAwareHTMLDefaultsToDisabled() {
+        let html = MarkdownHTMLService.buildContentAwareHTML(
+            content: "# Title",
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            isDark: false,
+            hasMermaid: false,
+            hasKaTeX: false
+        )
+
+        XCTAssertFalse(html.contains("data-document-copy-enabled"))
+        XCTAssertFalse(html.contains("data-document-copy-raw-base64"))
     }
 }

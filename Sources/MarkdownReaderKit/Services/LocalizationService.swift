@@ -60,6 +60,13 @@ public enum L10n {
         case settingsGeneralQuickLookDesc
         case settingsGeneralQuickLookEnabled
 
+        // 设置 - 内容一键复制
+        case settingsGeneralContentCopyTitle
+        case settingsGeneralContentCopyEnabled
+        case settingsGeneralQuickLookCopyFormat
+        case quickLookCopyFormatRichText
+        case quickLookCopyFormatRawMarkdown
+
         // 设置 - 外观 - 主题模式
         case settingsAppearanceThemeTitle
         case settingsAppearanceThemeDesc
@@ -312,6 +319,11 @@ public enum L10n {
         .settingsGeneralQuickLookTitle: "Quick Look Preview",
         .settingsGeneralQuickLookDesc: "Enable Markdown rendering in Finder Quick Look (press Space to preview).",
         .settingsGeneralQuickLookEnabled: "Enable Quick Look preview",
+        .settingsGeneralContentCopyTitle: "Content Copy",
+        .settingsGeneralContentCopyEnabled: "Enable one-click content copy",
+        .settingsGeneralQuickLookCopyFormat: "One-click copy content",
+        .quickLookCopyFormatRichText: "Rich Text",
+        .quickLookCopyFormatRawMarkdown: "Raw Markdown Text",
         .settingsAppearanceThemeTitle: "Theme",
         .settingsAppearanceThemeDesc: "Choose the application appearance mode.",
         .settingsAppearanceModeLight: "Light",
@@ -508,6 +520,11 @@ public enum L10n {
         .settingsGeneralQuickLookTitle: "Quick Look 预览",
         .settingsGeneralQuickLookDesc: "在 Finder 中按空格键预览 Markdown 文件的渲染效果。",
         .settingsGeneralQuickLookEnabled: "启用 Quick Look 预览",
+        .settingsGeneralContentCopyTitle: "内容一键复制",
+        .settingsGeneralContentCopyEnabled: "启用一键复制",
+        .settingsGeneralQuickLookCopyFormat: "一键复制内容",
+        .quickLookCopyFormatRichText: "富文本",
+        .quickLookCopyFormatRawMarkdown: "原始 Markdown 文本",
         .settingsAppearanceThemeTitle: "主题",
         .settingsAppearanceThemeDesc: "选择应用的外观模式。",
         .settingsAppearanceModeLight: "浅色",
@@ -704,6 +721,11 @@ public enum L10n {
         .settingsGeneralQuickLookTitle: "Quick Look 預覽",
         .settingsGeneralQuickLookDesc: "在 Finder 中按空白鍵預覽 Markdown 檔案的渲染效果。",
         .settingsGeneralQuickLookEnabled: "啟用 Quick Look 預覽",
+        .settingsGeneralContentCopyTitle: "內容一鍵複製",
+        .settingsGeneralContentCopyEnabled: "啟用一鍵複製",
+        .settingsGeneralQuickLookCopyFormat: "一鍵複製內容",
+        .quickLookCopyFormatRichText: "富文字",
+        .quickLookCopyFormatRawMarkdown: "原始 Markdown 文字",
         .settingsAppearanceThemeTitle: "主題",
         .settingsAppearanceThemeDesc: "選擇應用的外觀模式。",
         .settingsAppearanceModeLight: "淺色",

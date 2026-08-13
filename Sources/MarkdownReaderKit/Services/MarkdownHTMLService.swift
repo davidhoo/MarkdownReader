@@ -25,6 +25,42 @@ public enum MarkdownHTMLService {
         }
     }
 
+    /// 主阅读页运行时需求：依据已渲染 HTML 是否包含 Mermaid / KaTeX 决定加载哪些可选运行时。
+    ///
+    /// 检测输入是 `RenderResult.html`，不是原始 Markdown：
+    /// - `class="language-mermaid"` 表示 Mermaid；
+    /// - `class="language-math`、`class="language-latex"`、`class="language-katex"` 任一出现表示 KaTeX。
+    /// 这样自动覆盖 `$...$` / `$$...$$` 预处理产生的 `language-math`，以及直接声明的 math/latex/katex 代码块；
+    /// 检测本身不额外解析 Markdown。普通 Markdown 不加载 Mermaid/KaTeX，但仍加载 Prism 与 `markdown-reader.js`。
+    public struct MarkdownRuntimeRequirements: Equatable, Sendable {
+        public let requiresMermaid: Bool
+        public let requiresKaTeX: Bool
+
+        public init(requiresMermaid: Bool, requiresKaTeX: Bool) {
+            self.requiresMermaid = requiresMermaid
+            self.requiresKaTeX = requiresKaTeX
+        }
+
+        /// 完整资源集：保护未迁移调用方（Raw PDF 等）的默认页面合同。
+        public static let all = MarkdownRuntimeRequirements(
+            requiresMermaid: true,
+            requiresKaTeX: true
+        )
+
+        /// 从单次 `RenderResult` 推导运行时需求，不重复解析 Markdown。
+        public static func detect(in renderResult: RenderResult) -> MarkdownRuntimeRequirements {
+            let html = renderResult.html
+            let requiresMermaid = html.contains("class=\"language-mermaid\"")
+            let requiresKaTeX = html.contains("class=\"language-math")
+                || html.contains("class=\"language-latex\"")
+                || html.contains("class=\"language-katex\"")
+            return MarkdownRuntimeRequirements(
+                requiresMermaid: requiresMermaid,
+                requiresKaTeX: requiresKaTeX
+            )
+        }
+    }
+
     public static func render(_ markdown: String, baseURL: URL? = nil) -> RenderResult {
         let preprocessed = preprocess(markdown)
         let doc = Markdown.Document(parsing: preprocessed)
@@ -47,7 +83,7 @@ public enum MarkdownHTMLService {
         )
     }
 
-    public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "", documentCopyWebIcons: DocumentCopyWebIcons = .unavailable) -> String {
+    public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled, runtimeRequirements: MarkdownRuntimeRequirements = .all) -> String {
         buildFullHTML(
             renderResult: render(content, baseURL: baseURL),
             themeCSS: themeCSS,
@@ -55,19 +91,29 @@ public enum MarkdownHTMLService {
             maxContentWidthFollowsWindow: maxContentWidthFollowsWindow,
             baseURL: baseURL,
             isDark: isDark,
-            documentCopyTitle: documentCopyTitle,
-            documentCopiedTitle: documentCopiedTitle,
-            documentCopyWebIcons: documentCopyWebIcons
+            documentCopyConfiguration: documentCopyConfiguration,
+            runtimeRequirements: runtimeRequirements
         )
     }
 
     /// 以已有 `RenderResult` 装配完整 HTML 页面壳。不接收原始 Markdown，也不再次调用
     /// `render`，仅供调用方（如 WebView 完整加载）复用单次解析结果，避免重复 Markdown 预处理与解析。
-    public static func buildFullHTML(renderResult: RenderResult, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyTitle: String = "", documentCopiedTitle: String = "", documentCopyWebIcons: DocumentCopyWebIcons = .unavailable) -> String {
+    public static func buildFullHTML(renderResult: RenderResult, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled, runtimeRequirements: MarkdownRuntimeRequirements = .all) -> String {
         let baseURLAttr = baseURL != nil ? " data-base-url=\"\(baseURL!.path.addingXMLAttributeEscapes)\"" : ""
-        let copyTitleAttr = " data-document-copy-title=\"\(documentCopyTitle.addingXMLAttributeEscapes)\""
-        let copiedTitleAttr = " data-document-copied-title=\"\(documentCopiedTitle.addingXMLAttributeEscapes)\""
-        let copyIconVars = documentCopyWebIcons.cssFragment
+        let previewAttrs = Self.documentCopyPreviewAttributes(documentCopyConfiguration)
+        let copyIconVars = documentCopyConfiguration.webIcons.cssFragment
+
+        // 可选运行时按需求条件装配；默认 `.all` 保持与历史完整页面合同一致，保护 PDF 等未迁移调用方。
+        // 顺序固定：KaTeX CSS -> Mermaid JS -> KaTeX JS -> Prism -> autoloader -> markdown-reader.js。
+        let katexCSSLink = runtimeRequirements.requiresKaTeX
+            ? "<link rel=\"stylesheet\" href=\"mr:///css/katex.min.css\">"
+            : ""
+        let mermaidScript = runtimeRequirements.requiresMermaid
+            ? "<script src=\"mr:///js/mermaid.min.js\"></script>"
+            : ""
+        let katexScript = runtimeRequirements.requiresKaTeX
+            ? "<script src=\"mr:///js/katex.min.js\"></script>"
+            : ""
 
         return """
         <!DOCTYPE html>
@@ -77,20 +123,19 @@ public enum MarkdownHTMLService {
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <link rel="stylesheet" href="mr:///css/markdown.css">
             <link rel="stylesheet" href="mr:///css/scroll.css">
-            <link rel="stylesheet" href="mr:///css/katex.min.css">
-            <style id="mr-theme-style">\(themeCSS)</style>
+            \(katexCSSLink)<style id="mr-theme-style">\(themeCSS)</style>
             <style>
             :root { \(copyIconVars) --content-padding: \(contentPadding)px; --content-max-width: \(maxContentWidthFollowsWindow ? "none" : "980px"); }
             </style>
         </head>
         <body>
-            <div class="markdown-preview"\(baseURLAttr)\(copyTitleAttr)\(copiedTitleAttr)>
+            <div class="markdown-preview"\(baseURLAttr)\(previewAttrs)>
                 <div id="mr-content">
                     \(renderResult.html)
                 </div>
             </div>
-            <script src="mr:///js/mermaid.min.js"></script>
-            <script src="mr:///js/katex.min.js"></script>
+            \(mermaidScript)
+            \(katexScript)
             <script src="mr:///js/prism-core.min.js"></script>
             <script src="mr:///js/prism-autoloader.min.js"></script>
             <script>
@@ -102,10 +147,12 @@ public enum MarkdownHTMLService {
         """
     }
 
-    public static func buildContentAwareHTML(content: String, themeCSS: String, contentPadding: CGFloat, baseURL: URL?, isDark: Bool, hasMermaid: Bool, hasKaTeX: Bool, inlineImages: Bool = false) -> String {
+    public static func buildContentAwareHTML(content: String, themeCSS: String, contentPadding: CGFloat, baseURL: URL?, isDark: Bool, hasMermaid: Bool, hasKaTeX: Bool, inlineImages: Bool = false, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled) -> String {
         let renderResult = inlineImages ? renderWithInlineImages(content, baseURL: baseURL) : render(content, baseURL: baseURL)
 
         let baseURLAttr = baseURL != nil ? " data-base-url=\"\(baseURL!.path.addingXMLAttributeEscapes)\"" : ""
+        let previewAttrs = Self.documentCopyPreviewAttributes(documentCopyConfiguration)
+        let copyIconVars = documentCopyConfiguration.webIcons.cssFragment
 
         var scriptTags = ""
         if hasMermaid {
@@ -135,11 +182,11 @@ public enum MarkdownHTMLService {
             <link rel="stylesheet" href="mr:///css/scroll.css">
             \(katexCSS)<style id="mr-theme-style">\(themeCSS)</style>
             <style>
-            :root { --content-padding: \(contentPadding)px; --content-max-width: 980px; }
+            :root { \(copyIconVars) --content-padding: \(contentPadding)px; --content-max-width: 980px; }
             </style>
         </head>
         <body>
-            <div class="markdown-preview"\(baseURLAttr)>
+            <div class="markdown-preview"\(baseURLAttr)\(previewAttrs)>
                 <div id="mr-content">
                     \(renderResult.html)
                 </div>
@@ -407,6 +454,27 @@ public enum MarkdownHTMLService {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return content }
         let range = NSRange(content.startIndex..., in: content)
         return regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: "")
+    }
+
+    /// 从 `DocumentCopyPageConfiguration` 生成 `.markdown-preview` 上的 data-* 属性片段。
+    ///
+    /// - disabled 配置不输出任何复制属性、raw base64 或 mask 变量（mask 变量由
+    ///   `webIcons.cssFragment` 在 `:root` 控制，disabled 时 `webIcons` 应为 `.unavailable`）；
+    /// - enabled 配置输出 `data-document-copy-enabled`、`data-document-copy-format`、
+    ///   已 XML 属性转义的 title/aria 文案；
+    /// - 仅 `rawMarkdown` 格式且有非空原文时输出 `data-document-copy-raw-base64`，
+    ///   base64 为 ASCII，但仍做 XML 属性转义以防外层误注入。
+    static func documentCopyPreviewAttributes(_ configuration: DocumentCopyPageConfiguration) -> String {
+        guard configuration.isEnabled else { return "" }
+
+        var attrs = " data-document-copy-enabled=\"true\""
+        attrs += " data-document-copy-format=\"\(configuration.format.rawValue.addingXMLAttributeEscapes)\""
+        attrs += " data-document-copy-title=\"\(configuration.copyTitle.addingXMLAttributeEscapes)\""
+        attrs += " data-document-copied-title=\"\(configuration.copiedTitle.addingXMLAttributeEscapes)\""
+        if let base64 = configuration.rawMarkdownBase64 {
+            attrs += " data-document-copy-raw-base64=\"\(base64.addingXMLAttributeEscapes)\""
+        }
+        return attrs
     }
 }
 

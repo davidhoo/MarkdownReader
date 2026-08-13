@@ -136,6 +136,19 @@ struct GeneralSettingsView: View {
 
             SettingsDivider()
 
+            // 内容一键复制
+            SettingsSection(
+                title: L10n.tr(.settingsGeneralContentCopyTitle, language: language),
+                description: nil
+            ) {
+                Toggle(
+                    L10n.tr(.settingsGeneralContentCopyEnabled, language: language),
+                    isOn: $settings.enableDocumentCopy
+                )
+            }
+
+            SettingsDivider()
+
             // Quick Look 预览
             SettingsSection(
                 title: L10n.tr(.settingsGeneralQuickLookTitle, language: language),
@@ -145,6 +158,22 @@ struct GeneralSettingsView: View {
                     L10n.tr(.settingsGeneralQuickLookEnabled, language: language),
                     isOn: $settings.enableQuickLookPreview
                 )
+
+                // 总开关打开时，在启用 Toggle 下方显示 Quick Look 复制格式选择器；
+                // Quick Look Preview 自身关闭时，格式选择仍显示并保留已选值。
+                if settings.enableDocumentCopy {
+                    Picker(
+                        L10n.tr(.settingsGeneralQuickLookCopyFormat, language: language),
+                        selection: $settings.quickLookDocumentCopyFormat
+                    ) {
+                        Text(L10n.tr(.quickLookCopyFormatRichText, language: language))
+                            .tag(QuickLookDocumentCopyFormat.richText)
+                        Text(L10n.tr(.quickLookCopyFormatRawMarkdown, language: language))
+                            .tag(QuickLookDocumentCopyFormat.rawMarkdown)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 260)
+                }
             }
 
             SettingsDivider()

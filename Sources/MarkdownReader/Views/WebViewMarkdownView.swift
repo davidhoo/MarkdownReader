@@ -82,6 +82,9 @@ struct WebViewMarkdownView: View {
     var scrollToLine: Int?
     let themeCSS: String
     var isDark: Bool = true
+    /// 内容一键复制总开关：控制阅读页右上角整篇内容复制按钮。运行时切换走
+    /// 无重载 JavaScript bridge（`MR.setDocumentCopyButtonEnabled`），不触发 requestRender。
+    var documentCopyEnabled: Bool = true
     var searchQuery: String = ""
     var searchCaseSensitive: Bool = false
     var searchWholeWord: Bool = false
@@ -117,6 +120,9 @@ struct WebViewMarkdownView: View {
     @State private var renderScheduler = WebViewRenderScheduler()
     /// 上一次已应用的渲染快照，用于决策下一次动作（loadPage/replaceContent/none）。
     @State private var lastAppliedRender: WebViewRenderSnapshot?
+    /// 当前整页已加载的运行时需求。增量替换前与下一份 HTML 的需求比较：需求变化即提升为
+    /// 整页加载（新出现的图表/公式需对应脚本，已加载库无法卸载）。仅整页加载路径写入。
+    @State private var loadedRuntimeRequirements: MarkdownHTMLService.MarkdownRuntimeRequirements?
     /// 当前进行中的增量 `MR.replaceContent` 写入任务，新请求或视图消失时取消。
     @State private var contentReplacementTask: Task<Void, Never>?
     /// 持有 navigationDecider，使其生命周期与视图一致，便于注入内链 closure。
@@ -124,22 +130,38 @@ struct WebViewMarkdownView: View {
 
     var body: some View {
         webViewBase
-            .onAppear { handleAppear() }
-            .onChange(of: content) { _, _ in requestRender() }
-            .onChange(of: contentVersion) { _, _ in requestRender() }
-            .onChange(of: fileURL) { _, _ in requestRender() }
-            .onChange(of: scrollToLine) { _, newValue in handleScrollToLineChange(newValue) }
-            .onChange(of: page.isLoading) { _, isLoading in handleLoadingChange(isLoading) }
-            .onChange(of: themeCSS) { _, _ in updateThemeCSS(themeCSS) }
-            .onChange(of: contentPadding) { _, newValue in updateContentPadding(newValue) }
-            .onChange(of: maxContentWidthFollowsWindow) { _, newValue in updateMaxContentWidth(newValue) }
-            .onChange(of: searchQuery) { _, _ in updateSearchHighlight() }
-            .onChange(of: searchCaseSensitive) { _, _ in updateSearchHighlight() }
-            .onChange(of: searchWholeWord) { _, _ in updateSearchHighlight() }
-            .onChange(of: searchCurrentIndex) { _, newValue in setSearchCurrent(newValue) }
-            .onChange(of: isFindBarVisible) { _, isVisible in handleFindBarVisibleChange(isVisible) }
-            .onChange(of: language) { _, _ in updateDocumentCopyButtonLabels() }
-            .onChange(of: displayScale) { _, _ in requestRender() }
+            .modifier(DocumentCopyEventsModifier(
+                isDocumentCopyEnabled: documentCopyEnabled,
+                isFindBarVisible: isFindBarVisible,
+                language: language,
+                onAppear: handleAppear,
+                onDocumentCopyEnabledChange: handleDocumentCopyEnabledChange,
+                onFindBarVisibleChange: handleFindBarVisibleChange,
+                onUpdateDocumentCopyButtonLabels: updateDocumentCopyButtonLabels
+            ))
+            .modifier(DocumentContentEventsModifier(
+                content: content,
+                contentVersion: contentVersion,
+                fileURL: fileURL,
+                scrollToLine: scrollToLine,
+                pageIsLoading: page.isLoading,
+                themeCSS: themeCSS,
+                contentPadding: contentPadding,
+                maxContentWidthFollowsWindow: maxContentWidthFollowsWindow,
+                searchQuery: searchQuery,
+                searchCaseSensitive: searchCaseSensitive,
+                searchWholeWord: searchWholeWord,
+                searchCurrentIndex: searchCurrentIndex,
+                displayScale: displayScale,
+                onRequestRender: requestRender,
+                onScrollToLineChange: handleScrollToLineChange,
+                onLoadingChange: handleLoadingChange,
+                onUpdateThemeCSS: updateThemeCSS,
+                onUpdateContentPadding: updateContentPadding,
+                onUpdateMaxContentWidth: updateMaxContentWidth,
+                onUpdateSearchHighlight: updateSearchHighlight,
+                onSetSearchCurrent: setSearchCurrent
+            ))
             .modifier(WebViewRenderLifecycleModifier(
                 commandTargetIdentifier: commandTarget?.objectIdentifier,
                 onDisappear: handleDisappear,
@@ -147,10 +169,7 @@ struct WebViewMarkdownView: View {
                 renderGeneration: renderScheduler.generation,
                 renderTaskBody: renderTaskBody
             ))
-            .environment(\.openURL, OpenURLAction { url in
-                NSWorkspace.shared.open(url)
-                return .handled
-            })
+            .modifier(OpenExternalLinksModifier())
     }
 
     /// WebView 及其纯展示配置，不含事件 modifier。拆分以减轻整条 View 表达式的类型推断负担。
@@ -295,10 +314,31 @@ struct WebViewMarkdownView: View {
     private func loadContent(_ snapshot: WebViewRenderSnapshot) {
         let baseURL = snapshot.fileURL?.deletingLastPathComponent()
         let renderResult = MarkdownHTMLService.render(snapshot.content, baseURL: baseURL)
+        let runtimeRequirements = MarkdownHTMLService.MarkdownRuntimeRequirements.detect(in: renderResult)
+        loadPage(snapshot, renderResult: renderResult, runtimeRequirements: runtimeRequirements)
+    }
+
+    /// 用已完成的单次 `RenderResult` 与检测到的运行时需求整页装配。不再次调用 `render`。
+    /// 完整加载路径与运行时升级路径共用，确保每次整页加载都记录 `loadedRuntimeRequirements`。
+    private func loadPage(
+        _ snapshot: WebViewRenderSnapshot,
+        renderResult: MarkdownHTMLService.RenderResult,
+        runtimeRequirements: MarkdownHTMLService.MarkdownRuntimeRequirements
+    ) {
+        let baseURL = snapshot.fileURL?.deletingLastPathComponent()
+        loadedRuntimeRequirements = runtimeRequirements
         // 仅整页加载时获取缓存图标：按当前屏幕倍率取 data URL，传给页面壳注入 :root CSS 变量。
         // replaceContent、updateThemeCSS、copy click、5 秒 timer 与 mr:// handler 均不调用提供者。
         let documentCopyWebIcons = SFSymbolWebImageProvider.shared.documentCopyWebIcons(
             displayScale: displayScale
+        )
+        let documentCopyConfiguration = DocumentCopyPageConfiguration(
+            isEnabled: documentCopyEnabled,
+            format: .richText,
+            rawMarkdown: nil,
+            copyTitle: L10n.tr(.contentCopy, language: language),
+            copiedTitle: L10n.tr(.contentCopied, language: language),
+            webIcons: documentCopyWebIcons
         )
         let html = MarkdownHTMLService.buildFullHTML(
             renderResult: renderResult,
@@ -307,9 +347,8 @@ struct WebViewMarkdownView: View {
             maxContentWidthFollowsWindow: maxContentWidthFollowsWindow,
             baseURL: baseURL,
             isDark: isDark,
-            documentCopyTitle: L10n.tr(.contentCopy, language: language),
-            documentCopiedTitle: L10n.tr(.contentCopied, language: language),
-            documentCopyWebIcons: documentCopyWebIcons
+            documentCopyConfiguration: documentCopyConfiguration,
+            runtimeRequirements: runtimeRequirements
         )
 
         scrollPosition = ScrollPosition(edge: .top)
@@ -335,6 +374,17 @@ struct WebViewMarkdownView: View {
     private func replaceContent(_ snapshot: WebViewRenderSnapshot, generation: UInt) {
         let baseURL = snapshot.fileURL?.deletingLastPathComponent()
         let renderResult = MarkdownHTMLService.render(snapshot.content, baseURL: baseURL)
+
+        // 单次解析后即检测需求：与已加载需求比较，变化则复用该 RenderResult 整页加载，
+        // 不调用 MR.replaceContent，也不创建 contentReplacementTask，且不重复解析 Markdown。
+        let requirements = MarkdownHTMLService.MarkdownRuntimeRequirements.detect(in: renderResult)
+        if WebViewRuntimePolicy.action(
+            current: loadedRuntimeRequirements,
+            next: requirements
+        ) == .loadPage {
+            loadPage(snapshot, renderResult: renderResult, runtimeRequirements: requirements)
+            return
+        }
 
         let escapedHTML = renderResult.html.jsEscaped
 
@@ -415,6 +465,16 @@ struct WebViewMarkdownView: View {
         let hidden = isFindBarVisible
         Task { @MainActor [hidden] in
             _ = try? await page.callJavaScript("MR.setDocumentCopyButtonHidden(\(hidden))")
+        }
+    }
+
+    /// 总开关变化：无重载地增删 DOM 按钮，不触发 requestRender/page.load/MR.replaceContent。
+    /// 关闭时 JS 端 clear timer + remove 按钮；开启时幂等创建，并按当前查找栏状态同步显隐。
+    private func handleDocumentCopyEnabledChange(_ isEnabled: Bool) {
+        Task { @MainActor [isEnabled] in
+            _ = try? await page.callJavaScript("MR.setDocumentCopyButtonEnabled(\(isEnabled))")
+            // 创建/移除后仍需遵守查找栏显隐约定。
+            _ = try? await page.callJavaScript("MR.setDocumentCopyButtonHidden(\(isFindBarVisible))")
         }
     }
 
@@ -505,5 +565,77 @@ private struct WebViewRenderLifecycleModifier: ViewModifier {
             .task(id: renderGeneration) {
                 await renderTaskBody()
             }
+    }
+}
+
+/// 把外部链接交给系统打开。抽成独立 `ViewModifier` 以打断主 `body` 的超长 modifier 链，
+/// 让 Swift 类型推断在合理时间内完成。
+private struct OpenExternalLinksModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content.environment(\.openURL, OpenURLAction { url in
+            NSWorkspace.shared.open(url)
+            return .handled
+        })
+    }
+}
+
+/// 内容复制相关 onChange。单独成 modifier 以减轻主 body 类型推断负担。
+private struct DocumentCopyEventsModifier: ViewModifier {
+    let isDocumentCopyEnabled: Bool
+    let isFindBarVisible: Bool
+    let language: Language
+    let onAppear: () -> Void
+    let onDocumentCopyEnabledChange: (Bool) -> Void
+    let onFindBarVisibleChange: (Bool) -> Void
+    let onUpdateDocumentCopyButtonLabels: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { onAppear() }
+            .onChange(of: isFindBarVisible) { _, isVisible in onFindBarVisibleChange(isVisible) }
+            .onChange(of: language) { _, _ in onUpdateDocumentCopyButtonLabels() }
+            .onChange(of: isDocumentCopyEnabled) { _, isEnabled in onDocumentCopyEnabledChange(isEnabled) }
+    }
+}
+
+/// 正文内容/查找/缩放相关 onChange。单独成 modifier 以减轻主 body 类型推断负担。
+private struct DocumentContentEventsModifier: ViewModifier {
+    let content: String
+    let contentVersion: Int
+    let fileURL: URL?
+    let scrollToLine: Int?
+    let pageIsLoading: Bool
+    let themeCSS: String
+    let contentPadding: CGFloat
+    let maxContentWidthFollowsWindow: Bool
+    let searchQuery: String
+    let searchCaseSensitive: Bool
+    let searchWholeWord: Bool
+    let searchCurrentIndex: Int
+    let displayScale: CGFloat
+    let onRequestRender: () -> Void
+    let onScrollToLineChange: (Int?) -> Void
+    let onLoadingChange: (Bool) -> Void
+    let onUpdateThemeCSS: (String) -> Void
+    let onUpdateContentPadding: (CGFloat) -> Void
+    let onUpdateMaxContentWidth: (Bool) -> Void
+    let onUpdateSearchHighlight: () -> Void
+    let onSetSearchCurrent: (Int) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: self.content) { _, _ in onRequestRender() }
+            .onChange(of: contentVersion) { _, _ in onRequestRender() }
+            .onChange(of: fileURL) { _, _ in onRequestRender() }
+            .onChange(of: scrollToLine) { _, newValue in onScrollToLineChange(newValue) }
+            .onChange(of: pageIsLoading) { _, isLoading in onLoadingChange(isLoading) }
+            .onChange(of: themeCSS) { _, _ in onUpdateThemeCSS(themeCSS) }
+            .onChange(of: contentPadding) { _, newValue in onUpdateContentPadding(newValue) }
+            .onChange(of: maxContentWidthFollowsWindow) { _, newValue in onUpdateMaxContentWidth(newValue) }
+            .onChange(of: searchQuery) { _, _ in onUpdateSearchHighlight() }
+            .onChange(of: searchCaseSensitive) { _, _ in onUpdateSearchHighlight() }
+            .onChange(of: searchWholeWord) { _, _ in onUpdateSearchHighlight() }
+            .onChange(of: searchCurrentIndex) { _, newValue in onSetSearchCurrent(newValue) }
+            .onChange(of: displayScale) { _, _ in onRequestRender() }
     }
 }
