@@ -14,6 +14,95 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.2.10] - 2026-08-13
+
+### 修复
+
+- **Quick Look 复制格式标签换行**：设置页「Quick Look 复制格式」项的 segmented picker 此前将标签与选择器同行排列，长标签（简中/繁中）在 picker 固定宽度下被截断成多行，挤压控件。改为标签与分段选择器上下分行：标签用 12pt muted 文本并允许垂直换行，picker 隐藏自身标签、固定 260pt 宽度，互不挤占。选择器仅在总开关开启时显示，Quick Look Preview 关闭时仍保留已选格式值的行为不变
+
+## [2.2.9] - 2026-08-13
+
+### 新增
+
+- **内容一键复制总开关与 Quick Look 复制格式**：主阅读、Raw 编辑、Quick Look 三处整篇内容复制此前各自硬编码启用，无法统一关闭。新增设置项「内容一键复制」总开关（默认开启，仅在新 key 缺失时写入 true，绝不覆盖已有用户值），控制三处复制按钮的显隐与可点击；Quick Look 预览额外提供复制格式选择（富文本 / 原始 Markdown 文本），富文本复制渲染结构（标题、强调、表格、代码），原始 Markdown 复制文件 UTF-8 原文逐字保真
+  - 主应用与 Quick Look Extension 跨进程共享同一组偏好 key：新增 `SharedPreferenceKey` 集中 applicationID 与 4 个跨进程 key（`languagePref` / `enableQuickLookPreview` / `enableDocumentCopy` / `quickLookDocumentCopyFormat`），`SettingsModel` 改引用共享 key，消除两处 key 字符串重复。Extension 经 `CFPreferencesCopyAppValue` 从主应用 preference 域读取，缺失/无效值回退 Kit 兼容默认（总开关 true、格式 richText、语言 auto 用检测语言）
+  - 新增 `DocumentCopyConfiguration`（Kit）：`QuickLookDocumentCopyFormat` 枚举、`SharedPreferenceKey`、`QuickLookDocumentCopySettings`（值类型快照，解析逻辑收敛在 Kit，Provider 仅做 Bool/String 类型桥接）、`DocumentCopyPageConfiguration`（统一 enabled/格式/raw payload/文案/SF Symbol mask 图标的页面合同，`disabled` 静态默认保护 PDF 导出与未迁移入口）
+  - `MarkdownHTMLService` 两个页面壳入口（`buildFullHTML` / `buildContentAwareHTML`）改为接收 `DocumentCopyPageConfiguration`，disabled 配置不输出任何复制属性、raw base64 或 mask 变量；enabled 配置输出 `data-document-copy-enabled` / `data-document-copy-format` / title/aria 文案，仅 rawMarkdown 格式且原文非空时输出 base64（ASCII 但仍做 XML 属性转义）
+  - JS 侧 `addDocumentCopyButton` 改为仅在 `.markdown-preview[data-document-copy-enabled="true"]` 时创建，保护 PDF/打印与总开关关闭场景；新增 `setDocumentCopyButtonEnabled`（无重载增删按钮：关闭 clear timer + remove，开启幂等创建）、`copyRawMarkdownContent`（临时 textarea + execCommand 复制纯文本，decode/复制失败返回 false 不显示成功反馈）、`decodeUTF8Base64`（atob + TextDecoder('utf-8') 保证中文/emoji 字节保真）
+  - 总开关运行时切换走无重载 JS bridge（`MR.setDocumentCopyButtonEnabled`），不触发 requestRender/page.load/MR.replaceContent；语言变化走 `MR.setDocumentCopyButtonLabels` 更新 DOM 标签
+  - 设置页新增「内容一键复制」分区与 Quick Look 复制格式分段选择器（总开关开启时显示）；Raw 模式内容区右上角原生复制按钮与渲染页按钮一同遵从总开关
+  - 总开关关闭立即取消五秒任务并清除对号，避免关闭再开启后复活旧成功态
+  - `L10n` 新增 5 个三语文案（zh-Hans / zh-Hant / en）
+
+### 优化
+
+- **可选运行时按需加载**：主阅读页此前对每份普通 Markdown 无条件写入 `mermaid.min.js`（约 3.2 MB）、`katex.min.js`（约 272 KB）、`katex.min.css`（约 24 KB），即使正文无图表/公式也承担解析与内存成本。新增 `MarkdownHTMLService.MarkdownRuntimeRequirements` 值类型，从单次 `RenderResult.html` 推导需求（`class="language-mermaid"` → Mermaid；`class="language-math"` / `language-latex` / `language-katex` 任一 → KaTeX，自动覆盖 `$...$` / `$$...$$` 预处理产物），`buildFullHTML(renderResult:...)` 按需求条件装配可选资源标签，默认 `.all` 保持与历史完整页面合同一致以保护 Raw PDF 等未迁移调用方；Prism、autoloader、`markdown-reader.js` 始终加载
+  - 增量内容替换前对单次解析结果检测需求，与已加载需求比较：需求变化（新出现图表/公式，或反向消失）提升为整页加载（已加载库无法卸载），需求不变沿用既有 latest-wins 增量替换。新增纯策略 `WebViewRuntimePolicy.action(current:next:)`（current 为 nil → loadPage；相同 → replaceContent；不同 → loadPage）
+  - `WebViewWarmupService.warmupHTML` 仅保留 `markdown.css`、Prism、autoloader 与 `markdown-reader.js`，不再抢先载入 Mermaid/KaTeX；首次打开含图表/公式的文档按文档自身需求加载可选库
+
+### 修复
+
+- **Quick Look 内联图片读取留在 security-scoped access 内**：`preparePreviewOfFile` 此前在 `DispatchQueue.main.async` 闭包内才调用 `buildContentAwareHTML(inlineImages: true)`，此时 `url`/`dirURL` 的 security-scoped access 已在 `defer` 释放，导致同目录图片 `Data(contentsOf:)` 读取失败、内联 base64 缺失。改为在同步段、安全作用域仍有效时完成 HTML 生成（含图片读取）；仅 SF Symbol 图标栅格化（必须主线程）与 `webView.loadHTMLString` 推迟到 async 闭包，取到图标后通过 `injectDocumentCopyIcons(into:webIcons:)` 把 mask CSS 变量插入已生成 HTML 的首个 `:root {` 开括号后，不重新解析 Markdown、不重读图片
+
+### 测试
+
+- 新增 `QuickLookDocumentCopySettingsTests`：缺失值保持富文本、未知格式回退、有效 rawMarkdown 保留、auto/缺失语言偏好用检测语言
+- 新增 `MarkdownHTMLServiceTests` 运行时需求与按需装配用例：普通 Markdown 不加载可选运行时、Mermaid/单美元 math 检测、latex 围栏块、混合检测、`buildFullHTML` 按需省略/默认全量/仅 Mermaid/仅 KaTeX
+- 扩展 `DocumentCopyWebIconsTests`：disabled 不输出复制属性/payload/mask 变量、enabled richText 输出属性与 mask 变量与转义文案、rawMarkdown 输出 base64 而非原文、`buildContentAwareHTML` 同合同与默认 disabled
+- 扩展 `WebViewRenderSchedulerTests`：需求不变保持增量替换、新增 KaTeX 提升整页、移除 Mermaid 提升整页、current 为 nil 强制整页
+- 扩展 `AppStartupCoordinatorTests`：`warmupHTML` 仅基础运行时不含 Mermaid/KaTeX
+- 全部 195 个测试通过
+
+## [2.2.8] - 2026-08-12
+
+### 优化
+
+- **WebView 渲染触发收敛为单次动作**：`fileURL`/`content`/`contentVersion` 三个属性变更此前各自直接调用完整或增量渲染，快速连续切换文件、Reload 或外部刷新时会产生多次冗余渲染。新增 `WebViewRenderScheduler`（纯值类型 + latest-wins 世代），三触发器统一经 `requestRender()` 递增世代，由 `.task(id:)` 在一次 `Task.yield()` 后对最终快照执行唯一动作（`loadPage`/`replaceContent`/`none`）。一次文件切换只产生一次完整加载；同文件同版本的纯内容变化仍走 `MR.replaceContent` 增量路径；旧增量 JS 写入在新请求或视图消失时被取消或世代拒绝。配套 `WebViewRenderSchedulerTests` 覆盖决策规则与世代基线
+
+### 新增
+
+- **渲染模式复制图标改用 SF Symbols**：渲染模式内容区复制按钮此前使用手写 SVG 图标，与系统原生 SF Symbol 存在双套维护。新增 `SFSymbolWebImageProvider`（`@MainActor`），将 11pt Regular 符号栅格化为 14pt 透明 PNG，按屏幕倍率缓存为 data URL，在整页加载时注入 `:root` CSS 变量。WebKit 侧以 CSS `mask` + `currentColor` 上色，保留主题颜色、成功绿色、14px 图标、24px 透明触控区及无背景无边框视觉。缓存键为 `{ 配置版本, displayScale }`，同倍率至多栅格化各一次；`replaceContent`、主题更新、点击与五秒复位均命中缓存。新增 `DocumentCopySymbol`/`DocumentCopyWebIcons` 模型定义图标数据合同，配 `DocumentCopyWebIconsTests` 与 `SFSymbolWebImageProviderTests`
+
+## [2.2.7] - 2026-08-12
+
+### 优化
+
+- **完整加载时消除重复 Markdown 渲染**：渲染模式完整加载（`loadContent()`）此前对同一份 Markdown 调用了两次 `MarkdownHTMLService.render`——一次在 `buildFullHTML` 内部装配页面壳，一次仅为写入从未被读取的 `currentHeadings`。后者额外执行 Markdown 预处理、Document 解析与 formatter 遍历，对功能无贡献。新增 `buildFullHTML(renderResult:...)` 重载，`loadContent()` 先渲染一次再复用结果；旧 `buildFullHTML(content:...)` 签名保留兼容，内部也只渲染一次。HTML 模板、属性转义、CSS/JS 顺序、copy-button 合同逐字不变。同时删除从未被读取的 `currentHeadings` 与 `lastLoadedURL` 状态，并补充 `MarkdownHTMLServiceTests` 覆盖新旧入口的输出合同
+
+## [2.2.6] - 2026-08-12
+
+### 修复
+
+- **统一内容区复制按钮外观**：渲染模式与编辑模式的复制按钮此前各自使用不同样式（渲染模式有边框、背景、阴影；编辑模式有圆角背景卡片），与顶部文件路径按钮风格不一致。现统一为无边框、透明背景的纯图标样式，三处入口视觉一致
+  - 渲染模式（WebKit）：`.mr-document-copy-btn` 移除 `border`、`background`、`box-shadow`，改为 24×24 透明区域；SVG 图标更新为与 SF Symbol `doc.on.doc` 一致的重叠双文档样式；hover/active 仅改变颜色
+  - 编辑模式（SwiftUI）：移除 `RoundedRectangle` 背景与阴影，改用 `fgMuted` 颜色的纯 `Image`，与渲染模式及顶部路径按钮统一
+
+## [2.2.5] - 2026-08-12
+
+### 新增
+
+- **内容区复制与统一五秒对号反馈**：渲染模式与编辑模式内容区右上角各新增复制按钮，成功后图标变对号、5 秒后恢复；顶部文件路径按钮的反馈从居中 Toast 改为同样的对号状态切换。三处入口各自独立计时，连续点击从最后一次成功重新计算，互不串扰
+  - 渲染模式复制按钮注入 WebKit 文档内（`mr-document-copy-btn`），由真实 `click` 事件临时选中 `#mr-content` 走浏览器原生复制，保留标题、强调、表格、代码等富文本样式；`position: fixed` 固定不随滚动离开视口，不进入正文选区；查找栏打开时隐藏
+  - 编辑模式复制按钮为原生 SwiftUI 浮层，直接写 `documentViewModel.content` 的原始 Markdown 到 `NSPasteboard`，不经 Select All 或当前选区，避免影响焦点与 per-file undo
+  - 新增可测试的 `CopyFeedbackState` 纯逻辑（成功才置对号、连续点击重置计时），配 `CopyFeedbackStateTests` 覆盖状态机
+  - PDF 导出时隐藏渲染页复制按钮，避免出现在导出产物中
+  - `L10n` 新增 `contentCopy` / `contentCopied` 三语文案（zh-Hans / zh-Hant / en）
+- **MIT 许可证文件**：补上根目录 `LICENSE`，与项目声明的 MIT 许可证一致
+
+### 修复
+
+- **原生复制路径检查剪贴板写入结果**：`NSPasteboard.setString` 返回值纳入成功判断，写入失败时不亮对号，避免给用户复制成功的错觉
+
+## [2.2.4] - 2026-08-10
+
+### 新增
+
+- **可选 Homebrew Tap 安装渠道**：新增自建 Tap `davidhoo/homebrew-markdownreader`，用户可通过 `brew tap davidhoo/markdownreader && brew install --cask markdownreader` 安装与升级。Release DMG 仍为首要安装方式，Homebrew 为可选替代
+  - 4 个 README（zh-Hans / zh-Hant / en / ja）各新增「Homebrew（可选）」小节，提供 tap / install / upgrade 命令
+  - 各语言均说明应用未公证，引导用户走 macOS 原生「仍要打开」流程，不提供 `xattr` 或关闭 Gatekeeper 的命令
+  - 新增 `docs/homebrew-tap-maintenance.md` 固化每次发布后的人工更新步骤（下载 DMG → 计算 SHA-256 → 更新 Cask → `brew audit` 校验 → 推送 Tap）
+  - Cask 声明 `auto_updates true`，承认应用既有更新能力；用户强制由 Homebrew 升级时使用 `--greedy`
+
 ## [2.2.3] - 2026-07-31
 
 ### 修复

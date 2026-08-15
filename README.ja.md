@@ -35,9 +35,11 @@ Markdown Reader はまさにそのために作られました：
 | 数式 | KaTeX による LaTeX インライン・ブロック数式レンダリング |
 | Prism.js シンタックスハイライト | 30+言語のシンタックスハイライト、Prism.js エンジン |
 | Quick Look プレビュー | Finder で .md ファイルを選択してスペースキーを押すとプレビュー、アプリ起動不要 |
+| 文書全体のコピー | レンダリングモード、ソースモード、Quick Look のいずれからでも文書全体をワンクリックでコピー。設定で一括無効化可能、Quick Look はリッチテキストまたは元の Markdown を選択可能 |
 | ライブ編集 | ソースモードで直接編集、Cmd+S で保存、ファイル切り替え時に未保存内容を自動保持 |
 | ファイルツリー | フォルダを再帰的に閲覧、キーボードナビゲーション、右クリックで作成/名前変更/削除 |
 | アウトラインナビゲーション | 見出し階層を自動抽出、クリックでジャンプ、長文書の効率的な閲覧 |
+| オンデマンド読み込み | Mermaid、KaTeX 等のオプションコンポーネントは文書で必要な時だけ読み込み、通常の Markdown 読書がより軽快 |
 | 33 テーマ | 20 ダーク + 13 ライト、Markdown Preview Enhanced スタイルテーマ含む、カスタムカラーとコントラスト調整対応 |
 | 多言語対応 | 簡体字中国語、繁体字中国語、英語、システムに自動追従 |
 | CLI ツール | `mdr` コマンドでターミナルから Markdown ファイルを直接開く |
@@ -74,6 +76,23 @@ Markdown Reader はまさにそのために作られました：
 ### ダウンロード
 
 [Releases](https://github.com/davidhoo/MarkdownReader/releases) から最新の DMG をダウンロードし、アプリケーションフォルダにドラッグしてください。
+
+### Homebrew（オプション）
+
+自前の Tap を使って Homebrew でインストールすることもできます：
+
+```bash
+brew tap davidhoo/markdownreader
+brew install --cask markdownreader
+
+# アップグレード（アプリ自体が自己更新するため、Homebrew に新版を取得させるには --greedy が必要）
+brew update
+brew upgrade --cask --greedy markdownreader
+```
+
+Homebrew はインストールと任意のアップグレードのみを担います。既存の DMG 直接インストールやアプリ内更新はそのまま利用でき、互いに影響しません。
+
+> **公証されていないアプリについて**：MarkdownReader は開発者署名済みですが**公証されていません**（Apple Developer Program 未購入）。インストール方法に関わらず、初回起動時に macOS にブロックされた場合は、アプリケーションで MarkdownReader を **Control** クリックして「**開く**」を選び確認するか、「**システム設定 > プライバシーとセキュリティ**」で「**このまま開く**」をクリックしてください。本リポジトリは Gatekeeper を回避するコマンドを提供しません。
 
 ### 動作環境
 

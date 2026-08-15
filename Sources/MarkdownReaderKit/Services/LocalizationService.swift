@@ -61,6 +61,13 @@ public enum L10n {
         case settingsGeneralQuickLookDesc
         case settingsGeneralQuickLookEnabled
 
+        // 设置 - 内容一键复制
+        case settingsGeneralContentCopyTitle
+        case settingsGeneralContentCopyEnabled
+        case settingsGeneralQuickLookCopyFormat
+        case quickLookCopyFormatRichText
+        case quickLookCopyFormatRawMarkdown
+
         // 设置 - 外观 - 主题模式
         case settingsAppearanceThemeTitle
         case settingsAppearanceThemeDesc
@@ -152,6 +159,10 @@ public enum L10n {
         case titleBarToggleSplitPreview
         case titleBarCopyPath
         case titleBarPathCopied
+
+        // 内容区复制
+        case contentCopy
+        case contentCopied
 
         // 大纲
         case outlineTitle
@@ -311,6 +322,11 @@ public enum L10n {
         .settingsGeneralQuickLookTitle: "Quick Look Preview",
         .settingsGeneralQuickLookDesc: "Enable Markdown rendering in Finder Quick Look (press Space to preview).",
         .settingsGeneralQuickLookEnabled: "Enable Quick Look preview",
+        .settingsGeneralContentCopyTitle: "Content Copy",
+        .settingsGeneralContentCopyEnabled: "Enable one-click content copy",
+        .settingsGeneralQuickLookCopyFormat: "One-click copy content",
+        .quickLookCopyFormatRichText: "Rich Text",
+        .quickLookCopyFormatRawMarkdown: "Raw Markdown Text",
         .settingsAppearanceThemeTitle: "Theme",
         .settingsAppearanceThemeDesc: "Choose the application appearance mode.",
         .settingsAppearanceModeLight: "Light",
@@ -371,6 +387,8 @@ public enum L10n {
         .titleBarToggleSplitPreview: "Toggle Split Preview",
         .titleBarCopyPath: "Copy Path",
         .titleBarPathCopied: "Path Copied",
+        .contentCopy: "Copy Content",
+        .contentCopied: "Content Copied",
         .fileModifiedExternallyTitle: "File Modified Externally",
         .fileModifiedExternallyMessage: "The file has been modified by another application. Reloading will discard your current changes.",
         .fileModifiedExternallyReload: "Reload",
@@ -507,6 +525,11 @@ public enum L10n {
         .settingsGeneralQuickLookTitle: "Quick Look 预览",
         .settingsGeneralQuickLookDesc: "在 Finder 中按空格键预览 Markdown 文件的渲染效果。",
         .settingsGeneralQuickLookEnabled: "启用 Quick Look 预览",
+        .settingsGeneralContentCopyTitle: "内容一键复制",
+        .settingsGeneralContentCopyEnabled: "启用一键复制",
+        .settingsGeneralQuickLookCopyFormat: "一键复制内容",
+        .quickLookCopyFormatRichText: "富文本",
+        .quickLookCopyFormatRawMarkdown: "原始 Markdown 文本",
         .settingsAppearanceThemeTitle: "主题",
         .settingsAppearanceThemeDesc: "选择应用的外观模式。",
         .settingsAppearanceModeLight: "浅色",
@@ -567,6 +590,8 @@ public enum L10n {
         .titleBarToggleSplitPreview: "切换分栏预览",
         .titleBarCopyPath: "复制路径",
         .titleBarPathCopied: "路径已复制",
+        .contentCopy: "复制内容",
+        .contentCopied: "内容已复制",
         .fileModifiedExternallyTitle: "文件已被外部修改",
         .fileModifiedExternallyMessage: "文件已被其他应用修改，重新加载将丢弃当前未保存的更改。",
         .fileModifiedExternallyReload: "重新加载",
@@ -703,6 +728,11 @@ public enum L10n {
         .settingsGeneralQuickLookTitle: "Quick Look 預覽",
         .settingsGeneralQuickLookDesc: "在 Finder 中按空白鍵預覽 Markdown 檔案的渲染效果。",
         .settingsGeneralQuickLookEnabled: "啟用 Quick Look 預覽",
+        .settingsGeneralContentCopyTitle: "內容一鍵複製",
+        .settingsGeneralContentCopyEnabled: "啟用一鍵複製",
+        .settingsGeneralQuickLookCopyFormat: "一鍵複製內容",
+        .quickLookCopyFormatRichText: "富文字",
+        .quickLookCopyFormatRawMarkdown: "原始 Markdown 文字",
         .settingsAppearanceThemeTitle: "主題",
         .settingsAppearanceThemeDesc: "選擇應用的外觀模式。",
         .settingsAppearanceModeLight: "淺色",
@@ -763,6 +793,8 @@ public enum L10n {
         .titleBarToggleSplitPreview: "切換分欄預覽",
         .titleBarCopyPath: "複製路徑",
         .titleBarPathCopied: "路徑已複製",
+        .contentCopy: "複製內容",
+        .contentCopied: "內容已複製",
         .fileModifiedExternallyTitle: "檔案已被外部修改",
         .fileModifiedExternallyMessage: "檔案已被其他應用修改，重新載入將捨棄目前未儲存的變更。",
         .fileModifiedExternallyReload: "重新載入",

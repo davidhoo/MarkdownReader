@@ -36,6 +36,8 @@ feature_pdf_title: "导出 PDF"
 feature_pdf_desc: "一键将渲染后的 Markdown 导出为 PDF，保留主题样式，方便分享和存档。"
 feature_command_palette_title: "命令面板"
 feature_command_palette_desc: "按 ⌘P 快速搜索并打开文件，模糊匹配文件名，键盘导航。"
+feature_document_copy_title: "内容一键复制"
+feature_document_copy_desc: "一键复制整篇内容；可在设置中关闭，Quick Look 支持富文本或原始 Markdown。"
 
 # Themes
 themes_title: "33 套主题，随心切换"
@@ -148,6 +150,8 @@ feat_ql_title: "Quick Look 预览"
 feat_ql_desc: "在 Finder 中选中 .md 文件按空格，即可预览渲染效果。需在 设置 → 通用 → Quick Look 预览 中启用。"
 feat_export_title: "导出 PDF"
 feat_export_desc: "按 ⌥⌘E 或使用菜单 文件 → 导出 PDF，将渲染内容导出为 PDF 文件，保留当前主题样式。"
+feat_document_copy_title: "内容一键复制"
+feat_document_copy_desc: "渲染模式、原文模式与 Quick Look 均可一键复制整篇内容；在 设置 → 通用 中可统一关闭三处复制入口。Quick Look 开启时可选择复制为富文本或原始 Markdown。"
 
 help_faq_title: "常见问题"
 help_faq_subtitle: "遇到问题？先看看这里"

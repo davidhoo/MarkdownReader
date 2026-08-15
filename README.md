@@ -35,9 +35,11 @@ Markdown Reader 就是为这个场景而生：
 | 数学公式 | KaTeX 渲染 LaTeX 行内和块级公式 |
 | Prism.js 代码高亮 | 30+ 语言语法高亮，Prism.js 引擎 |
 | Quick Look 预览 | Finder 中选中 .md 文件按空格即可预览渲染效果，无需打开应用 |
+| 整篇内容复制 | 渲染模式、原文模式与 Quick Look 可一键复制整篇内容；设置可统一关闭，Quick Look 可选富文本或原始 Markdown |
 | 实时编辑 | 原文模式直接编辑，Cmd+S 保存，切换文件自动保留未保存内容 |
 | 目录树 | 递归浏览文件夹，键盘导航，右键新建/重命名/删除 |
 | 大纲导航 | 自动提取标题层级，点击跳转，阅读长文档更高效 |
+| 按需加载 | Mermaid、KaTeX 等可选组件仅在文档需要时加载，普通 Markdown 阅读更轻快 |
 | 33 套主题 | 20 深色 + 13 浅色，含 Markdown Preview Enhanced 风格主题，支持自定义配色和对比度调节 |
 | 多语言 | 简体中文、繁体中文、英文，自动跟随系统 |
 | 命令行工具 | `mdr` 命令从终端直接打开 Markdown 文件 |
@@ -74,6 +76,23 @@ Markdown Reader 就是为这个场景而生：
 ### 下载安装
 
 前往 [Releases](https://github.com/davidhoo/MarkdownReader/releases) 下载最新版 DMG，拖入应用程序文件夹即可。
+
+### Homebrew（可选）
+
+也可以通过自建 Tap 用 Homebrew 安装：
+
+```bash
+brew tap davidhoo/markdownreader
+brew install --cask markdownreader
+
+# 升级（因应用自带更新，需加 --greedy 才由 Homebrew 拉取新版）
+brew update
+brew upgrade --cask --greedy markdownreader
+```
+
+Homebrew 只负责安装与可选升级；应用仍保留既有 DMG 直装和应用内更新方式，互不影响。
+
+> **关于未公证应用**：MarkdownReader 是开发者签名但**未公证**（未购买 Apple Developer Program）。无论用哪种方式安装，首次启动若被 macOS 拦截，请在「应用程序」中按住 **Control** 点击 MarkdownReader，选择「**打开**」并在弹窗中确认；或进入「**系统设置 > 隐私与安全性**」，点击「**仍要打开**」。本仓库不提供绕过 Gatekeeper 的命令。
 
 ### 系统要求
 

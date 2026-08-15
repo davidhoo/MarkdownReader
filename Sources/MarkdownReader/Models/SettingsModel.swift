@@ -52,7 +52,7 @@ final class SettingsModel {
         static let appearanceMode       = "com.markdownreader.appearanceMode"
         static let sourceFontSize       = "com.markdownreader.sourceFontSize"
         static let contentPadding       = "com.markdownreader.contentPadding"
-        static let languagePref         = "com.markdownreader.languagePref"
+        static let languagePref         = SharedPreferenceKey.languagePref
         static let themeId              = "com.markdownreader.themeId"
         static let themeCustomOverrides = "com.markdownreader.themeCustomOverrides"
         static let lastOpenedDirectory  = "com.markdownreader.lastOpenedDirectory"
@@ -64,7 +64,9 @@ final class SettingsModel {
         static let maxContentWidthFollowsWindow = "com.markdownreader.maxContentWidthFollowsWindow"
         static let skippedVersion       = "com.markdownreader.skippedVersion"
         static let lastUpdateCheckTime  = "com.markdownreader.lastUpdateCheckTime"
-        static let enableQuickLookPreview = "com.markdownreader.enableQuickLookPreview"
+        static let enableQuickLookPreview = SharedPreferenceKey.enableQuickLookPreview
+        static let enableDocumentCopy     = SharedPreferenceKey.enableDocumentCopy
+        static let quickLookDocumentCopyFormat = SharedPreferenceKey.quickLookDocumentCopyFormat
     }
 
     private let defaults = UserDefaults.standard
@@ -131,6 +133,19 @@ final class SettingsModel {
     /// 启用 Quick Look 预览（在 Finder 中按空格键预览 Markdown 文件）
     var enableQuickLookPreview: Bool {
         didSet { defaults.set(enableQuickLookPreview, forKey: Keys.enableQuickLookPreview) }
+    }
+
+    /// 内容一键复制总开关：控制主阅读、Raw 编辑、Quick Look 三处整篇内容复制按钮。
+    /// 默认开启；仅在新 key 缺失时写入 true，绝不覆盖已有用户值。
+    var enableDocumentCopy: Bool {
+        didSet { defaults.set(enableDocumentCopy, forKey: Keys.enableDocumentCopy) }
+    }
+
+    /// Quick Look 整篇内容复制格式。仅决定 Quick Look 复制语义，
+    /// 不影响主应用阅读（富文本）与 Raw 编辑（原始 Markdown）。
+    /// 默认富文本；仅在新 key 缺失时写入，绝不覆盖已有用户值。
+    var quickLookDocumentCopyFormat: QuickLookDocumentCopyFormat {
+        didSet { defaults.set(quickLookDocumentCopyFormat.rawValue, forKey: Keys.quickLookDocumentCopyFormat) }
     }
 
     // MARK: - 自动更新
@@ -388,6 +403,19 @@ final class SettingsModel {
             defaults.set(true, forKey: Keys.enableQuickLookPreview)
         }
         self.enableQuickLookPreview = defaults.bool(forKey: Keys.enableQuickLookPreview)
+        // 内容一键复制默认开启，仅在新 key 缺失时写入 true，绝不覆盖已有用户值
+        // （Extension 通过 CFPreferences 读取，key 不存在时总开关视为关闭）。
+        if defaults.object(forKey: Keys.enableDocumentCopy) == nil {
+            defaults.set(true, forKey: Keys.enableDocumentCopy)
+        }
+        self.enableDocumentCopy = defaults.bool(forKey: Keys.enableDocumentCopy)
+        // Quick Look 复制格式默认富文本，仅在新 key 缺失时写入，绝不覆盖已有用户值。
+        if defaults.object(forKey: Keys.quickLookDocumentCopyFormat) == nil {
+            defaults.set(QuickLookDocumentCopyFormat.richText.rawValue, forKey: Keys.quickLookDocumentCopyFormat)
+        }
+        self.quickLookDocumentCopyFormat = QuickLookDocumentCopyFormat(
+            rawValue: defaults.string(forKey: Keys.quickLookDocumentCopyFormat) ?? ""
+        ) ?? .richText
         self.skippedVersion = defaults.string(forKey: Keys.skippedVersion)
         self.lastUpdateCheckTime = defaults.object(forKey: Keys.lastUpdateCheckTime) as? Date
         self.appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ?? .system

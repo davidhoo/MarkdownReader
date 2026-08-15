@@ -35,9 +35,11 @@ When you don't need writing, collaboration, or fancy features — just want to *
 | Math formulas | KaTeX renders LaTeX inline and block formulas |
 | Prism.js syntax highlighting | 30+ language syntax highlighting via Prism.js |
 | Quick Look preview | Select a .md file in Finder and press Space to preview — no app launch needed |
+| Copy document content | Rendered mode, source mode, and Quick Look can copy an entire document in one click. Turn it off in Settings; Quick Look supports rich text or raw Markdown |
 | Live editing | Edit in source mode, Cmd+S to save, unsaved content preserved when switching files |
 | File tree | Recursively browse folders, keyboard navigation, right-click to create/rename/delete |
 | Outline navigation | Auto-extract heading hierarchy, click to jump — efficient for long documents |
+| On-demand loading | Optional components like Mermaid and KaTeX load only when a document needs them, keeping plain Markdown reading lighter |
 | 33 themes | 20 dark + 13 light, including Markdown Preview Enhanced style themes, with custom color and contrast controls |
 | Multi-language | Simplified Chinese, Traditional Chinese, English — auto-follows system |
 | CLI tool | `mdr` command to open Markdown files directly from the terminal |
@@ -74,6 +76,23 @@ When you don't need writing, collaboration, or fancy features — just want to *
 ### Download
 
 Go to [Releases](https://github.com/davidhoo/MarkdownReader/releases) to download the latest DMG, then drag it to your Applications folder.
+
+### Homebrew (optional)
+
+You can also install MarkdownReader via a self-hosted Homebrew tap:
+
+```bash
+brew tap davidhoo/markdownreader
+brew install --cask markdownreader
+
+# Upgrade (the app self-updates, so add --greedy for Homebrew to pull the new version)
+brew update
+brew upgrade --cask --greedy markdownreader
+```
+
+Homebrew only handles installation and optional upgrades; the existing DMG install and in-app update paths remain available and unaffected.
+
+> **About the unnotarized app**: MarkdownReader is development-signed but **not notarized** (no Apple Developer Program). Regardless of how you install it, if macOS blocks the first launch, Control-click MarkdownReader in Applications, choose **Open**, and confirm; or go to **System Settings > Privacy & Security** and click **Open Anyway**. This repo does not provide commands to bypass Gatekeeper.
 
 ### System Requirements
 

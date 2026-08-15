@@ -64,8 +64,13 @@ struct DetailView: View {
     /// PDF 导出失败提示
     @State private var showExportPDFError = false
 
-    /// 路径复制成功提示
-    @State private var showPathCopied = false
+    /// 顶部路径复制反馈（独立于内容区复制，5 秒对号）
+    @State private var pathCopyState = CopyFeedbackState()
+    @State private var pathCopyResetTask: Task<Void, Never>?
+
+    /// 编辑模式内容区复制反馈（独立 5 秒对号）
+    @State private var contentCopyState = CopyFeedbackState()
+    @State private var contentCopyResetTask: Task<Void, Never>?
 
     /// 导出用的 WebPage 引用
     @State private var exportedPage: WebPage?
@@ -128,6 +133,8 @@ struct DetailView: View {
             commandTarget?.findHandler = nil
             commandTarget?.reloadHandler = nil
             commandTarget?.exportPDFHandler = nil
+            // 视图退出：取消复制反馈计时并隐藏对号。
+            invalidateCopyFeedback()
         }
     }
 
@@ -195,18 +202,17 @@ struct DetailView: View {
                     Button {
                         let pasteboard = NSPasteboard.general
                         pasteboard.clearContents()
-                        pasteboard.setString(path, forType: .string)
-                        showPathCopied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            showPathCopied = false
+                        if pasteboard.setString(path, forType: .string) {
+                            beginPathCopyFeedback()
                         }
                     } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10))
-                            .foregroundStyle(themeColors.fgMuted)
+                        Image(systemName: pathCopyState.isShowingSuccess ? DocumentCopySymbol.copied.rawValue : DocumentCopySymbol.copy.rawValue)
+                            .font(.system(size: 11))
+                            .frame(width: 14)
+                            .foregroundStyle(pathCopyState.isShowingSuccess ? themeColors.success : themeColors.fgMuted)
                     }
                     .buttonStyle(.plain)
-                    .help(L10n.tr(.titleBarCopyPath, language: language))
+                    .help(L10n.tr(pathCopyState.isShowingSuccess ? .titleBarPathCopied : .titleBarCopyPath, language: language))
                     .padding(.leading, 2)
                 }
             }
@@ -313,25 +319,52 @@ struct DetailView: View {
                 Toggle(L10n.tr(.fileModifiedExternallyDontRemind, language: language), isOn: $dontRemindAgain)
             }
         }
-        .overlay(alignment: .top) {
-            if showPathCopied {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                    Text(L10n.tr(.titleBarPathCopied, language: language))
-                        .font(.system(size: 12))
-                }
-                .foregroundStyle(themeColors.fgSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(themeColors.surface, in: Capsule())
-                .overlay(Capsule().stroke(themeColors.border, lineWidth: 1))
-                .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
-                .padding(.top, 4)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+    }
+
+    // MARK: - 复制反馈
+
+    /// 顶部路径复制成功后启动 5 秒对号。连续点击时取消旧 task、以最新 generation
+    /// 重新计时，旧计时不会提前清掉新对号。
+    private func beginPathCopyFeedback() {
+        pathCopyResetTask?.cancel()
+        let generation = pathCopyState.begin()
+        pathCopyResetTask = Task { @MainActor [generation] in
+            try? await Task.sleep(for: .seconds(5))
+            if Task.isCancelled { return }
+            pathCopyState.reset(ifCurrent: generation)
         }
-        .animation(.easeInOut(duration: 0.2), value: showPathCopied)
+    }
+
+    /// 编辑模式内容复制成功后启动 5 秒对号，语义同路径复制。
+    private func beginContentCopyFeedback() {
+        contentCopyResetTask?.cancel()
+        let generation = contentCopyState.begin()
+        contentCopyResetTask = Task { @MainActor [generation] in
+            try? await Task.sleep(for: .seconds(5))
+            if Task.isCancelled { return }
+            contentCopyState.reset(ifCurrent: generation)
+        }
+    }
+
+    /// 编辑模式复制：写入当前原始 Markdown。仅复制真实成功后才显示对号。
+    /// 不调用 Select All，不改动 NSTextView selection 或 undo 栈。
+    private func copyRawContent() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if pasteboard.setString(documentViewModel.content, forType: .string) {
+            beginContentCopyFeedback()
+        }
+    }
+
+    /// 取消所有复制反馈计时并隐藏对号。模式/文件/视图生命周期变化时调用，
+    /// 防止旧文档的成功态残留到新文档。
+    private func invalidateCopyFeedback() {
+        pathCopyResetTask?.cancel()
+        pathCopyResetTask = nil
+        pathCopyState.invalidate()
+        contentCopyResetTask?.cancel()
+        contentCopyResetTask = nil
+        contentCopyState.invalidate()
     }
 
     // MARK: - 内容区
@@ -623,6 +656,31 @@ struct DetailView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topTrailing) {
+                // 编辑模式内容区右上角原生复制按钮。
+                // 仅 raw 模式 + 有文档 + 查找栏关闭 + 内容一键复制总开关开启时显示，
+                // 避免与查找栏浮层重叠，并遵从总开关。
+                // 挂在左侧源码容器上：分栏时按钮保留在 Markdown 源码栏，右侧预览栏不显示。
+                if documentViewModel.hasDocument
+                    && documentViewModel.displayMode == .raw
+                    && !appViewModel.isFindBarVisible
+                    && settings.enableDocumentCopy {
+                    Button {
+                        copyRawContent()
+                    } label: {
+                        Image(systemName: contentCopyState.isShowingSuccess ? DocumentCopySymbol.copied.rawValue : DocumentCopySymbol.copy.rawValue)
+                            .font(.system(size: 11))
+                            .frame(width: 14, height: 14)
+                            .foregroundStyle(contentCopyState.isShowingSuccess ? themeColors.success : themeColors.fgMuted)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help(L10n.tr(contentCopyState.isShowingSuccess ? .contentCopied : .contentCopy, language: language))
+                    .padding(.trailing, 11)
+                    .padding(.top, 3)
+                    .transition(.opacity)
+                }
+            }
 
             // 编辑模式：右侧实时渲染预览（默认关闭，经标题栏按钮开启；纯文本模式不支持）
             if documentViewModel.displayMode == .raw && !documentViewModel.isPlainTextMode && appViewModel.isSplitPreviewEnabled {
@@ -667,10 +725,16 @@ struct DetailView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: appViewModel.isFindBarVisible)
+        .animation(.easeInOut(duration: 0.2), value: contentCopyState.isShowingSuccess)
         .onChange(of: findReplaceViewModel.searchText) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isCaseSensitive) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isWholeWord) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isRegularExpression) { _, _ in performSearch() }
+        // 模式/文件切换：废弃旧文档的复制反馈，防止残留对号。
+        .onChange(of: documentViewModel.displayMode) { _, _ in invalidateCopyFeedback() }
+        .onChange(of: documentViewModel.currentFileURL) { _, _ in invalidateCopyFeedback() }
+        // 总开关关闭：立即取消五秒任务并清除对号，避免关闭再开启后复活旧成功态。
+        .onChange(of: settings.enableDocumentCopy) { _, _ in invalidateCopyFeedback() }
     }
 
     /// 渲染视图（渲染模式全宽显示 / 编辑模式右栏实时预览共用）
@@ -684,6 +748,9 @@ struct DetailView: View {
             scrollToLine: documentViewModel.scrollToLineRequest,
             themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
             isDark: settings.resolvedThemeType == .dark,
+            // 仅渲染模式显示 WebView 内复制按钮；分栏预览时右栏不显示，
+            // 复制按钮保留在左侧 Markdown 源码栏（原生 overlay）。
+            documentCopyEnabled: settings.enableDocumentCopy && documentViewModel.displayMode == .rendered,
             searchQuery: findReplaceViewModel.searchText,
             searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
             searchWholeWord: findReplaceViewModel.isWholeWord,
