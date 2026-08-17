@@ -78,6 +78,12 @@ struct DetailView: View {
     /// 编辑模式右侧实时预览的内容（防抖更新，避免每次击键都全量渲染）
     @State private var previewContent: String = ""
 
+    /// 分栏预览 WebView 自身的 WebPage 引用。
+    /// 不与渲染模式的 `exportedPage` 共享：预览 WebView 移除/重建时不应影响渲染模式
+    /// 仍持有的 WebPage，避免两者在切模式/切分栏的过渡窗口争抢同一绑定导致 use-after-free。
+    /// Raw 模式 PDF 导出走独立 HTML 路径，不读取此绑定。
+    @State private var previewExportedPage: WebPage?
+
 
     var body: some View {
         VStack(spacing: 0) {
@@ -652,7 +658,7 @@ struct DetailView: View {
 
                 // 渲染模式视图 — 仅在渲染模式下显示（渲染模式布局保持不变）
                 if documentViewModel.displayMode == .rendered {
-                    webMarkdownView(content: documentViewModel.content)
+                    webMarkdownView(content: documentViewModel.content, exportedPage: $exportedPage)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -686,7 +692,7 @@ struct DetailView: View {
             if documentViewModel.displayMode == .raw && !documentViewModel.isPlainTextMode && appViewModel.isSplitPreviewEnabled {
                 Rectangle().fill(themeColors.border).frame(width: 1)
 
-                webMarkdownView(content: previewContent)
+                webMarkdownView(content: previewContent, exportedPage: $previewExportedPage)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -703,9 +709,12 @@ struct DetailView: View {
             previewContent = documentViewModel.content
         }
         .task(id: documentViewModel.content) {
-            // 击键防抖：停顿 200ms 无新输入后再刷新右侧预览
+            // 击键防抖：停顿 200ms 无新输入后再刷新右侧预览。
+            // 分栏已关闭时不写 previewContent：避免对已拆毁的预览 WebView 触发无谓重算，
+            // 也避免与视图树拆毁竞态。
             try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled else { return }
+            guard appViewModel.isSplitPreviewEnabled else { return }
             previewContent = documentViewModel.content
         }
         .overlay(alignment: .topTrailing) {
@@ -739,7 +748,7 @@ struct DetailView: View {
 
     /// 渲染视图（渲染模式全宽显示 / 编辑模式右栏实时预览共用）
     @ViewBuilder
-    private func webMarkdownView(content: String) -> some View {
+    private func webMarkdownView(content: String, exportedPage: Binding<WebPage?>) -> some View {
         WebViewMarkdownView(
             content: content,
             fileURL: documentViewModel.currentFileURL,
@@ -767,7 +776,7 @@ struct DetailView: View {
             onOpenLinkedMarkdownFile: { [weak session] url in
                 session?.handleLinkedMarkdownFile(url.standardizedFileURL)
             },
-            exportedPage: $exportedPage
+            exportedPage: exportedPage
         )
         .onChange(of: documentViewModel.scrollToLineRequest) { _, newValue in
             if newValue != nil {
