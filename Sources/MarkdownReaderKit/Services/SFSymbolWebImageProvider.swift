@@ -23,8 +23,9 @@ public final class SFSymbolWebImageProvider {
     // MARK: - 配置（任一变更须 bump configurationVersion 以失效旧缓存）
 
     /// 配置版本：覆盖两个 symbol、11 pt、Regular weight 与 14 pt 画布。
+    /// 11 pt SF Symbol 以其配置后固有尺寸居中绘制于 14 pt 透明画布（不缩放成正方形）。
     /// 调整任一参数时递增，使旧缓存键失效。
-    private static let configurationVersion = 1
+    private static let configurationVersion = 2
 
     /// 逻辑画布尺寸（pt）。SF Symbol 以 11 pt 居中绘制于该透明画布。
     private static let canvasPoints: CGFloat = 14
@@ -150,6 +151,15 @@ public final class SFSymbolWebImageProvider {
         )
         let configured = baseImage.withSymbolConfiguration(configuration) ?? baseImage
 
+        // 11 pt 配置后固有尺寸：与编辑模式 `.font(.system(size: 11))` 对齐的唯一原生尺寸来源。
+        // 不缩放成正方形——以固有尺寸居中绘制，保留 SF Symbol 的原始比例。
+        let intrinsicSize = configured.size
+        guard intrinsicSize.width.isFinite, intrinsicSize.height.isFinite,
+              intrinsicSize.width > 0, intrinsicSize.height > 0 else {
+            logger.error("rasterize: invalid intrinsic size for \(symbol.rawValue)")
+            return nil
+        }
+
         let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: Int(pixels),
@@ -176,8 +186,13 @@ public final class SFSymbolWebImageProvider {
         }
         NSGraphicsContext.current = context
 
-        // 透明画布：不填充背景，仅绘制符号 alpha。
-        let drawRect = NSRect(x: 0, y: 0, width: points, height: points)
+        // 透明画布：不填充背景，仅绘制符号 alpha。固有尺寸居中于 14 pt 画布。
+        let drawRect = NSRect(
+            x: (points - intrinsicSize.width) / 2,
+            y: (points - intrinsicSize.height) / 2,
+            width: intrinsicSize.width,
+            height: intrinsicSize.height
+        )
         configured.draw(
             in: drawRect,
             from: .zero,
