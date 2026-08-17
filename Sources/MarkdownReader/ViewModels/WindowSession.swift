@@ -87,11 +87,6 @@ final class WindowSession {
         self.appViewModel = AppViewModel()
         self.fileTreeViewModel = FileTreeViewModel(settings: settings)
         self.documentViewModel = DocumentViewModel(settings: settings)
-        // 默认显示模式为「编辑」时，按「默认分栏」设置初始化分栏预览。
-        // 视图层通过 onChange(displayMode) 应用该设置，但 init 阶段赋的初始值不会触发 onChange，需在此显式同步。
-        if settings.defaultDisplayMode == .raw {
-            self.appViewModel.isSplitPreviewEnabled = settings.defaultSplitPreview
-        }
         self.commandPaletteViewModel = CommandPaletteViewModel()
         self.identityService = identityService
         self.coordinator = coordinator

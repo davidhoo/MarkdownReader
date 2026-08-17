@@ -139,9 +139,6 @@ extension NSWindow {
 /// 防止 setSelectedRange / 布局变化触发 scrollRangeToVisible 导致跳动
 class HighlightableTextView: NSTextView {
     var suppressAutoScroll = false
-    /// 底部留白高度（约一个空行）。在文档末尾新增行时，保证最后一行
-    /// 不会完全沉到窗口底边，下方始终保留约一行高度的可视空间。
-    var bottomOverscroll: CGFloat = 0
     /// 弱引用窗口级 undoStore（Task 10），deinit 时清空 undo 动作防止悬空指针。
     weak var undoStore: WindowUndoStore?
 
@@ -156,49 +153,7 @@ class HighlightableTextView: NSTextView {
     override func scrollRangeToVisible(_ range: NSRange) {
         if !suppressAutoScroll {
             super.scrollRangeToVisible(range)
-            keepLastLineAboveBottomEdge(range)
         }
-    }
-
-    /// 指定字符范围所在行的 line fragment 矩形（textContainer 坐标系）。
-    /// 插入点位于文本末尾且文本以换行结尾时，光标在 extra line fragment 中。
-    /// 注意：extra line fragment 未被使用时返回的是 height=0 的占位矩形而非
-    /// NSZeroRect，必须用 height 判断，否则会拿到零高度的错误矩形。
-    func lineFragmentBounds(for range: NSRange) -> CGRect? {
-        guard let layoutManager = layoutManager, let textContainer = textContainer else { return nil }
-        layoutManager.ensureLayout(for: textContainer)
-        let textLength = (string as NSString).length
-        guard textLength > 0 else { return nil }
-        if range.location >= textLength {
-            let extra = layoutManager.extraLineFragmentUsedRect
-            if extra.height > 0 {
-                return extra
-            }
-            guard layoutManager.numberOfGlyphs > 0 else { return nil }
-            return layoutManager.lineFragmentUsedRect(forGlyphAt: layoutManager.numberOfGlyphs - 1, effectiveRange: nil)
-        }
-        let glyphIndex = layoutManager.glyphIndexForCharacter(at: range.location)
-        return layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil)
-    }
-
-    /// 当滚动目标位于文档末尾（最后一行）且其下方留白不足一个空行高度时，
-    /// 继续向上滚动，在底部留出一个空行的空间。
-    private func keepLastLineAboveBottomEdge(_ range: NSRange) {
-        guard bottomOverscroll > 0,
-              let scrollView = enclosingScrollView else { return }
-        let textLength = (string as NSString).length
-        // 仅处理接近文档末尾的范围（最后一行）
-        guard textLength > 0, range.location >= textLength - 1,
-              let lineRect = lineFragmentBounds(for: range) else { return }
-
-        let lineBottom = lineRect.maxY + textContainerOrigin.y
-        let clipBounds = scrollView.contentView.bounds
-        let gap = clipBounds.maxY - lineBottom
-        guard gap < bottomOverscroll else { return }
-
-        let newOrigin = NSPoint(x: clipBounds.origin.x, y: clipBounds.origin.y + (bottomOverscroll - gap))
-        scrollView.contentView.setBoundsOrigin(newOrigin)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     deinit {
@@ -342,13 +297,6 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         // 设置边距
         textView.textContainerInset = NSSize(width: contentPadding, height: contentPadding)
 
-        // 底部留白目标高度（约一个空行）：末尾新增行时最后一行下方
-        // 应保留约一行高度的空间。注意：不设置 scrollView/clipView 的
-        // contentInsets — 系统在布局时会覆写该值（实测被改写），主动设置
-        // 既无效还会污染 scrollView.visibleRect 导致滚动计算漂移。
-        let lineHeight = textView.layoutManager?.defaultLineHeight(for: defaultFont) ?? (fontSize * 1.5)
-        textView.bottomOverscroll = ceil(lineHeight)
-
         // 应用初始高亮
         let syntaxColors = deriveSyntaxColors(from: themeColors)
         MarkdownSyntaxHighlighter.applyHighlights(
@@ -475,14 +423,6 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             textView.textContainerInset = newInset
         }
 
-        // 同步底部留白目标高度（fontSize 可能通过设置变化）
-        let currentFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        let lineHeight = textView.layoutManager?.defaultLineHeight(for: currentFont) ?? (fontSize * 1.5)
-        let newOverscroll = ceil(lineHeight)
-        if abs(textView.bottomOverscroll - newOverscroll) > 0.01 {
-            textView.bottomOverscroll = newOverscroll
-        }
-
         // First responder 管理：切换到 Raw 模式时自动获取焦点
         // 查找面板可见时不抢占焦点，避免搜索输入框失去焦点
         if isActive, !isFindBarVisible, let window = textView.window, window.firstResponder !== textView {
@@ -545,14 +485,11 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             let textContainerOrigin = textView.textContainerOrigin
             let targetY = rect.origin.y + textContainerOrigin.y
 
-            // 视口高度取 clipView.bounds：scrollView.visibleRect 会被系统管理的
-            // contentInsets 污染，导致定位漂移
-            let visibleHeight = scrollView.contentView.bounds.height
+            let visibleHeight = scrollView.visibleRect.height
             let adjustedY = max(0, targetY - visibleHeight / 3.0)
 
             let documentHeight = scrollView.documentView?.frame.height ?? 0
-            // 系统管理的 contentInsets 提供少量额外可滚动空间，钳制上限读取容忍
-            let clampedY = min(adjustedY, documentHeight - visibleHeight + scrollView.contentView.contentInsets.bottom)
+            let clampedY = min(adjustedY, documentHeight - visibleHeight)
 
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
@@ -700,27 +637,9 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             let restoredRect = layoutManager.boundingRect(forGlyphRange: restoredGlyphRange, in: textContainer)
             let targetY = restoredRect.origin.y + textContainerOrigin.y - verticalOffset
 
-            // 视口高度取 clipView.bounds：scrollView.visibleRect 会被系统管理的
-            // contentInsets 污染（实测高度虚增），导致钳制与可见性判断失真
-            let visibleHeight = scrollView.contentView.bounds.height
+            let visibleHeight = scrollView.visibleRect.height
             let documentHeight = scrollView.documentView?.frame.height ?? 0
-            // 系统管理的 contentInsets 提供少量额外可滚动空间，钳制上限读取容忍（不主动设置）
-            let maxY = max(0, documentHeight - visibleHeight + scrollView.contentView.contentInsets.bottom)
-            var clampedY = max(0, min(targetY, maxY))
-
-            // 确保插入点仍在视野内：锚点恢复可能把正在输入的最后一行推出视野，
-            // 之后按键的自动滚动与位置恢复相互拉扯，造成闪动
-            let insertionRange = NSRange(location: selectedRange.location, length: 0)
-            if let lineRect = textView.lineFragmentBounds(for: insertionRange) {
-                let lineTop = lineRect.minY + textContainerOrigin.y
-                let lineBottom = lineRect.maxY + textContainerOrigin.y
-                if lineBottom > clampedY + visibleHeight {
-                    // 插入点所在行沉到视野外：向下滚动让其可见，并在底部留出一个空行
-                    clampedY = min(maxY, lineBottom - visibleHeight + textView.bottomOverscroll)
-                } else if lineTop < clampedY {
-                    clampedY = max(0, lineTop - textContainerOrigin.y)
-                }
-            }
+            let clampedY = max(0, min(targetY, documentHeight - visibleHeight))
 
             scrollView.contentView.setBoundsOrigin(
                 NSPoint(x: scrollView.contentView.bounds.origin.x, y: clampedY)
