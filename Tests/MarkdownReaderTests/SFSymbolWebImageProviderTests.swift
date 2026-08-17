@@ -58,6 +58,44 @@ final class SFSymbolWebImageProviderTests: XCTestCase {
         XCTAssertTrue(copiedRep.hasAlpha)
     }
 
+    // MARK: - 原始比例与居中：与 11 pt 原生 SF Symbol 对齐
+
+    /// 渲染模式默认态 `doc.on.doc` 与成功态 `checkmark` 必须保留 11 pt SF Symbol 的固有尺寸与比例，
+    /// 居中绘制于 14 pt 透明画布——而不是被强制缩放成正方形。
+    ///
+    /// 此处用一个独立于生产 `rasterize` 的参考绘制 helper 冻结可观察合同：以
+    /// `configured.size` 居中绘制到 14 pt 透明 bitmap，再比对 provider 输出 PNG 与参考 bitmap
+    /// 的非透明 alpha 外接边界（x/y/width/height）。只比较边界而非像素哈希，
+    /// 因为 SF Symbol 抗锯齿会随 macOS 更新；本测试只冻结比例、尺寸与居中。
+    func testRasterizedSymbolsMatchNativeElevenPointAspectAndCentering() {
+        let provider = SFSymbolWebImageProvider.shared
+        let icons = provider.documentCopyWebIcons(displayScale: 1)
+
+        let cases: [(DocumentCopySymbol, String)] = [
+            (.copy, icons.copyMaskDataURL),
+            (.copied, icons.copiedMaskDataURL),
+        ]
+
+        for (symbol, dataURL) in cases {
+            guard let providerRep = decodedPNG(from: dataURL) else {
+                XCTFail("provider PNG 解码失败 for \(symbol.rawValue)")
+                continue
+            }
+            guard let providerBounds = alphaBounds(in: providerRep) else {
+                XCTFail("provider 输出无可见像素 for \(symbol.rawValue)")
+                continue
+            }
+            guard let referenceBounds = referenceAlphaBounds(for: symbol) else {
+                XCTFail("11 pt 原生参考栅格化失败 for \(symbol.rawValue)")
+                continue
+            }
+            XCTAssertEqual(providerBounds.x, referenceBounds.x, "\(symbol.rawValue): x 不一致")
+            XCTAssertEqual(providerBounds.y, referenceBounds.y, "\(symbol.rawValue): y 不一致")
+            XCTAssertEqual(providerBounds.width, referenceBounds.width, "\(symbol.rawValue): width 不一致")
+            XCTAssertEqual(providerBounds.height, referenceBounds.height, "\(symbol.rawValue): height 不一致")
+        }
+    }
+
     // MARK: - 缓存：注入计数 rasterizer
 
     func testSameScaleReusesCacheAndRasterizesOnce() {
@@ -147,6 +185,82 @@ final class SFSymbolWebImageProviderTests: XCTestCase {
             }
         }
         return false
+    }
+
+    /// 解码 data URL 为 PNG bitmap，失败返回 nil（不做强制断言）。
+    private func decodedPNG(from dataURL: String) -> NSBitmapImageRep? {
+        let prefix = "data:image/png;base64,"
+        guard dataURL.hasPrefix(prefix) else { return nil }
+        let base64 = String(dataURL.dropFirst(prefix.count))
+        guard let data = Data(base64Encoded: base64) else { return nil }
+        return NSBitmapImageRep(data: data)
+    }
+
+    /// 计算非透明像素的外接矩形（像素坐标，左下原点与 NSBitmapImageRep 一致）。
+    /// 返回 (x, y, width, height)；无可见像素返回 nil。
+    private func alphaBounds(in rep: NSBitmapImageRep) -> (x: Int, y: Int, width: Int, height: Int)? {
+        guard let tiff = rep.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        var minX = bitmap.pixelsWide
+        var minY = bitmap.pixelsHigh
+        var maxX = -1
+        var maxY = -1
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let alpha = bitmap.colorAt(x: x, y: y)?.alphaComponent, alpha > 0 else { continue }
+                if x < minX { minX = x }
+                if x > maxX { maxX = x }
+                if y < minY { minY = y }
+                if y > maxY { maxY = y }
+            }
+        }
+        guard maxX >= 0 else { return nil }
+        return (minX, minY, maxX - minX + 1, maxY - minY + 1)
+    }
+
+    /// 独立于生产 `rasterize` 的 11 pt 原生参考绘制：以 `configured.size`（不缩放）居中
+    /// 绘制到 14 pt 透明 bitmap（1× = 14×14 px），返回其 alpha 外接矩形。
+    /// 与生产实现刻意分开，避免共享同一 drawRect 导致测试与实现同错。
+    private func referenceAlphaBounds(for symbol: DocumentCopySymbol) -> (x: Int, y: Int, width: Int, height: Int)? {
+        guard let base = NSImage(systemSymbolName: symbol.rawValue, accessibilityDescription: nil) else {
+            return nil
+        }
+        let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        let configured = base.withSymbolConfiguration(configuration) ?? base
+        let intrinsic = configured.size
+        guard intrinsic.width.isFinite, intrinsic.height.isFinite,
+              intrinsic.width > 0, intrinsic.height > 0 else {
+            return nil
+        }
+
+        let points: CGFloat = 14
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 14,
+            pixelsHigh: 14,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return nil }
+        bitmap.size = NSSize(width: points, height: points)
+
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        NSGraphicsContext.current = context
+
+        let drawRect = NSRect(
+            x: (points - intrinsic.width) / 2,
+            y: (points - intrinsic.height) / 2,
+            width: intrinsic.width,
+            height: intrinsic.height
+        )
+        configured.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+        return alphaBounds(in: bitmap)
     }
 
     /// 生成一个稳定的小 PNG stub，供缓存计数测试使用（不参与尺寸断言）。
