@@ -45,7 +45,6 @@ final class SettingsModel {
 
     private enum Keys {
         static let defaultDisplayMode   = "com.markdownreader.defaultDisplayMode"
-        static let defaultSplitPreview  = "com.markdownreader.defaultSplitPreview"
         static let reopenLastLocation   = "com.markdownreader.reopenLastLocation"
         static let showHiddenFiles      = "com.markdownreader.showHiddenFiles"
         static let showNonMarkdownFiles = "com.markdownreader.showNonMarkdownFiles"
@@ -87,11 +86,6 @@ final class SettingsModel {
     /// 默认显示模式（渲染 / 原文）
     var defaultDisplayMode: DisplayMode {
         didSet { defaults.set(defaultDisplayMode.rawValue, forKey: Keys.defaultDisplayMode) }
-    }
-
-    /// 进入编辑模式时默认开启左右分栏预览
-    var defaultSplitPreview: Bool {
-        didSet { defaults.set(defaultSplitPreview, forKey: Keys.defaultSplitPreview) }
     }
 
     /// 启动时重新打开上次位置
@@ -388,7 +382,6 @@ final class SettingsModel {
         let defaults = UserDefaults.standard
 
         self.defaultDisplayMode = DisplayMode(rawValue: defaults.string(forKey: Keys.defaultDisplayMode) ?? "") ?? .rendered
-        self.defaultSplitPreview = defaults.object(forKey: Keys.defaultSplitPreview) as? Bool ?? false
         self.languagePref = LanguagePref(rawValue: defaults.string(forKey: Keys.languagePref) ?? "") ?? .auto
         self.reopenLastLocation = defaults.object(forKey: Keys.reopenLastLocation) as? Bool ?? false
         self.showHiddenFiles = defaults.object(forKey: Keys.showHiddenFiles) as? Bool ?? false
