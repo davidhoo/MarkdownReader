@@ -480,7 +480,8 @@ struct DetailView: View {
         OutlineView(
             items: documentViewModel.outlineItems,
             onSelect: { item in
-                documentViewModel.requestScrollToLine(item.lineNumber)
+                // Task 2 临时适配：保持既有 0-based 跳转行为，Task 3 统一为 SourceLine
+                documentViewModel.requestScrollToLine(item.sourceLine.zeroBasedIndex)
             },
             activeLineNumber: activeOutlineLineNumber
         )

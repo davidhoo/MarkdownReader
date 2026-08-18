@@ -106,7 +106,7 @@ struct OutlineView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .hoverBackground(themeColors: themeColors, isActive: item.lineNumber == activeLineNumber)
+        .hoverBackground(themeColors: themeColors, isActive: item.sourceLine.oneBased == activeLineNumber)
     }
 
     // MARK: - 样式辅助

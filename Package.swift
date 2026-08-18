@@ -54,7 +54,7 @@ let package = Package(
         // Multi-window routing & ownership logic — pure-logic unit tests
         .testTarget(
             name: "MarkdownReaderTests",
-            dependencies: ["MarkdownReader"],
+            dependencies: ["MarkdownReader", "MarkdownReaderKit"],
             path: "Tests/MarkdownReaderTests"
         )
     ]
