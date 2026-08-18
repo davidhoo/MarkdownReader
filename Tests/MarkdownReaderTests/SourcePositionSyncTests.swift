@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import SwiftUI
 @testable import MarkdownReaderKit
 @testable import MarkdownReader
 
@@ -156,6 +157,36 @@ final class SourcePositionSyncTests: XCTestCase {
         )
     }
 
+    func testRawVisibleSourceLineConvertsViewportPointByRemovingTextContainerInset() {
+        let point = RawVisibleSourceLine.textContainerPoint(
+            visibleOrigin: NSPoint(x: 40, y: 300),
+            textContainerOrigin: NSPoint(x: 20, y: 20)
+        )
+
+        XCTAssertEqual(point, NSPoint(x: 20, y: 280))
+    }
+
+    @MainActor
+    func testRawEditorCoordinatorRefreshesItsActiveStateBeforeReportingScroll() {
+        let theme = ThemeColors.from(PresetThemes.darkThemes[0])
+        let inactiveEditor = SyntaxHighlightedEditor(
+            content: .constant(""),
+            themeColors: theme,
+            isActive: false
+        )
+        let coordinator = inactiveEditor.makeCoordinator()
+        XCTAssertFalse(coordinator.parent.isActive)
+
+        let activeEditor = SyntaxHighlightedEditor(
+            content: .constant(""),
+            themeColors: theme,
+            isActive: true
+        )
+        coordinator.refresh(parent: activeEditor)
+
+        XCTAssertTrue(coordinator.parent.isActive)
+    }
+
     // MARK: - 活跃 Raw 编辑器实际滚动：报告可见行且不动光标
 
     /// 构造真实 AppKit 布局的编辑器：填入至少 50 行文本，视口滚到中部后读取可见行。
@@ -181,7 +212,7 @@ final class SourcePositionSyncTests: XCTestCase {
         textContainer.widthTracksTextView = true
         textContainer.heightTracksTextView = false
         textContainer.size = NSSize(width: 240, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainerInset = NSSize(width: 0, height: 0)
+        textView.textContainerInset = NSSize(width: 20, height: 20)
 
         // 60 行内容，足以让视口滚到中部
         let lines = (1...60).map { "line \($0) for scrolling test" }
@@ -219,9 +250,9 @@ final class SourcePositionSyncTests: XCTestCase {
         // 直接复用 RawVisibleSourceLine + layoutManager 计算路径，与生产代码一致。
         let visibleRect = scrollView.contentView.bounds
         let textContainerOrigin = textView.textContainerOrigin
-        let topPoint = NSPoint(
-            x: visibleRect.origin.x + textContainerOrigin.x,
-            y: visibleRect.origin.y + textContainerOrigin.y
+        let topPoint = RawVisibleSourceLine.textContainerPoint(
+            visibleOrigin: visibleRect.origin,
+            textContainerOrigin: textContainerOrigin
         )
         let glyphIndex = layoutManager.glyphIndex(for: topPoint, in: textContainer)
         XCTAssertNotEqual(glyphIndex, NSNotFound)

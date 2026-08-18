@@ -195,6 +195,18 @@ enum RawSourceLineOffset {
 /// 超出 `(content as NSString).length` 的偏移钳制至最后可定位行，避免产生
 /// 无效 `SourceLine`；空内容返回 nil。
 enum RawVisibleSourceLine {
+    /// 将文本视图/clip view 坐标转换为 text container 坐标。
+    /// `textContainerOrigin` 是容器在 text view 内的偏移，因此反向换算必须相减。
+    static func textContainerPoint(
+        visibleOrigin: NSPoint,
+        textContainerOrigin: NSPoint
+    ) -> NSPoint {
+        NSPoint(
+            x: visibleOrigin.x - textContainerOrigin.x,
+            y: visibleOrigin.y - textContainerOrigin.y
+        )
+    }
+
     static func sourceLine(in content: String, utf16CharacterOffset offset: Int) -> SourceLine? {
         let nsContent = content as NSString
         let length = nsContent.length
@@ -491,6 +503,7 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.refresh(parent: self)
         guard let textView = scrollView.documentView as? HighlightableTextView else { return }
 
         // 检测文件切换：在更新 coordinator.currentFileURL 之前先捕获，供内容同步判定使用。
@@ -698,6 +711,12 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             self.parent = parent
         }
 
+        /// `NSViewRepresentable` 的 coordinator 在首次创建后持续复用；每次 SwiftUI
+        /// 更新都必须刷新值类型 parent，才能读取当前 isActive 与回调闭包。
+        func refresh(parent: SyntaxHighlightedEditor) {
+            self.parent = parent
+        }
+
         @MainActor
         func checkAppearanceChange() {
             let currentToken = NSApp.effectiveAppearance.description
@@ -782,9 +801,9 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             let visibleRect = scrollView.contentView.bounds
             let textContainerOrigin = textView.textContainerOrigin
             // 视口顶部在文本容器坐标系中的点
-            let topPoint = NSPoint(
-                x: visibleRect.origin.x + textContainerOrigin.x,
-                y: visibleRect.origin.y + textContainerOrigin.y
+            let topPoint = RawVisibleSourceLine.textContainerPoint(
+                visibleOrigin: visibleRect.origin,
+                textContainerOrigin: textContainerOrigin
             )
 
             let glyphIndex = layoutManager.glyphIndex(for: topPoint, in: textContainer)
