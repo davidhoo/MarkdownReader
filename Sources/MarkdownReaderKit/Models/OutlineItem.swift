@@ -8,6 +8,12 @@ public struct OutlineItem: Identifiable, Equatable {
     public let level: Int
     /// 标题文本（去除 # 前缀后的纯文本）
     public let title: String
-    /// 在原文中的行号（0-based），用于定位滚动
-    public let lineNumber: Int
+    /// 在原文中的源码行位置（1-based），用于定位滚动与高亮同步
+    public let sourceLine: SourceLine
+
+    public init(level: Int, title: String, sourceLine: SourceLine) {
+        self.level = level
+        self.title = title
+        self.sourceLine = sourceLine
+    }
 }

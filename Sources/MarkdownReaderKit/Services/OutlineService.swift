@@ -29,7 +29,7 @@ public enum OutlineService {
             }
 
             // ATX 风格标题：# Title
-            if let item = parseATXHeading(trimmed, lineNumber: index) {
+            if let item = parseATXHeading(trimmed, zeroBasedIndex: index) {
                 items.append(item)
                 continue
             }
@@ -38,9 +38,9 @@ public enum OutlineService {
             if index + 1 < lines.count {
                 let nextLine = lines[index + 1].trimmingCharacters(in: .whitespaces)
                 if nextLine.hasPrefix("===") {
-                    items.append(OutlineItem(level: 1, title: trimmed, lineNumber: index))
+                    items.append(OutlineItem(level: 1, title: trimmed, sourceLine: SourceLine(zeroBasedIndex: index)))
                 } else if nextLine.hasPrefix("---") && !trimmed.hasPrefix("#") {
-                    items.append(OutlineItem(level: 2, title: trimmed, lineNumber: index))
+                    items.append(OutlineItem(level: 2, title: trimmed, sourceLine: SourceLine(zeroBasedIndex: index)))
                 }
             }
         }
@@ -49,7 +49,7 @@ public enum OutlineService {
     }
 
     /// 解析 ATX 风格标题（# 开头）
-    private static func parseATXHeading(_ line: String, lineNumber: Int) -> OutlineItem? {
+    private static func parseATXHeading(_ line: String, zeroBasedIndex: Int) -> OutlineItem? {
         var hashCount = 0
         for char in line {
             if char == "#" {
@@ -79,6 +79,6 @@ public enum OutlineService {
         title = title.trimmingCharacters(in: .whitespaces)
         guard !title.isEmpty else { return nil }
 
-        return OutlineItem(level: hashCount, title: title, lineNumber: lineNumber)
+        return OutlineItem(level: hashCount, title: title, sourceLine: SourceLine(zeroBasedIndex: zeroBasedIndex))
     }
 }

@@ -58,8 +58,8 @@ struct DetailView: View {
     @State private var showUnsupportedFileAlert = false
     @State private var unsupportedFileExt = ""
 
-    /// 渲染模式下当前可见标题的行号（用于大纲高亮同步）
-    @State private var activeOutlineLineNumber: Int?
+    /// 渲染模式下当前可见标题的源码行（用于大纲高亮同步）
+    @State private var activeOutlineLineNumber: SourceLine?
 
     /// PDF 导出失败提示
     @State private var showExportPDFError = false
@@ -74,6 +74,11 @@ struct DetailView: View {
 
     /// 导出用的 WebPage 引用
     @State private var exportedPage: WebPage?
+
+    /// Raw→Rendered 过渡状态机：begin 时 Raw 保持可见（挡住 WebView 中间状态），track
+    /// 记录真实目标世代，completeIfMatching 在目标渲染完成时让 Raw 退场露出 WebView。
+    /// Rendered→Raw 及 DetailView 消失时 cancel。详见 `RenderedModeTransitionState`。
+    @State private var renderedTransition = RenderedModeTransitionState()
 
 
     var body: some View {
@@ -220,7 +225,15 @@ struct DetailView: View {
             if documentViewModel.hasDocument && !documentViewModel.isPlainTextMode {
                 Picker("", selection: Binding(
                     get: { documentViewModel.displayMode },
-                    set: { documentViewModel.switchDisplayMode($0) }
+                    set: { newValue in
+                        // Raw→Rendered：先 begin() 保持 Raw 可见挡住 WebView 中间状态，
+                        // 再切 mode。WebView 随后经 onRenderRequested 报告真实世代并 track；
+                        // 不由 DetailView 猜世代。Rendered→Raw 由下方 onChange 走 cancel()。
+                        if documentViewModel.displayMode == .raw && newValue == .rendered {
+                            renderedTransition.begin()
+                        }
+                        documentViewModel.switchDisplayMode(newValue)
+                    }
                 )) {
                     Text(L10n.tr(.displayModeRendered, language: language)).tag(DisplayMode.rendered)
                     Text(L10n.tr(.displayModeRaw, language: language)).tag(DisplayMode.raw)
@@ -480,7 +493,7 @@ struct DetailView: View {
         OutlineView(
             items: documentViewModel.outlineItems,
             onSelect: { item in
-                documentViewModel.requestScrollToLine(item.lineNumber)
+                documentViewModel.requestScroll(to: item.sourceLine)
             },
             activeLineNumber: activeOutlineLineNumber
         )
@@ -525,8 +538,8 @@ struct DetailView: View {
                 textViewSearchRef.clearSearchHighlights()
             }
         } else if findReplaceViewModel.hasResults {
-            if let line = findReplaceViewModel.currentMatchLine {
-                documentViewModel.requestScrollToLine(line)
+            if let sourceLine = findReplaceViewModel.currentMatchSourceLine {
+                documentViewModel.requestScroll(to: sourceLine)
             }
         }
     }
@@ -561,8 +574,8 @@ struct DetailView: View {
                 at: findReplaceViewModel.currentMatchIndex,
                 in: findReplaceViewModel.matchRanges
             )
-        } else if let line = findReplaceViewModel.currentMatchLine {
-            documentViewModel.requestScrollToLine(line)
+        } else if let sourceLine = findReplaceViewModel.currentMatchSourceLine {
+            documentViewModel.requestScroll(to: sourceLine)
         }
     }
 
@@ -599,12 +612,57 @@ struct DetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// 常驻渲染 WebView。抽成独立计算属性以打断 `documentContentView` 的类型推断——
+    /// 内联加 `onRenderRequested`/`onRenderGenerationCompleted` 闭包后表达式过长，编译器
+    /// 无法在合理时间类型检查。`@ViewBuilder` 作用域内可访问 `$exportedPage` 与 `session`。
+    @ViewBuilder
+    private var renderedMarkdownView: some View {
+        WebViewMarkdownView(
+            content: documentViewModel.content,
+            fileURL: documentViewModel.currentFileURL,
+            contentPadding: settings.contentPaddingPoints,
+            maxContentWidthFollowsWindow: settings.maxContentWidthFollowsWindow,
+            scrollToSourceLine: documentViewModel.scrollToSourceLineRequest,
+            themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
+            isDark: settings.resolvedThemeType == .dark,
+            documentCopyEnabled: settings.enableDocumentCopy,
+            searchQuery: findReplaceViewModel.searchText,
+            searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
+            searchWholeWord: findReplaceViewModel.isWholeWord,
+            searchCurrentIndex: findReplaceViewModel.currentMatchIndex,
+            isFindBarVisible: appViewModel.isFindBarVisible,
+            contentVersion: documentViewModel.contentVersion,
+            onVisibleHeadingChanged: { heading in
+                activeOutlineLineNumber = heading?.sourceLine
+            },
+           onVisibleLineChanged: { sourceLine in
+               documentViewModel.renderedVisibleSourceLine = sourceLine
+           },
+           commandTarget: commandTarget,
+           onOpenLinkedMarkdownFile: { [weak session] url in
+               session?.handleLinkedMarkdownFile(url.standardizedFileURL)
+           },
+            isRenderedMode: documentViewModel.displayMode == .rendered,
+            onRenderRequested: { generation in
+                // WebView 真实发起 requestRender 时记录目标世代，使过渡等待该世代完成。
+                renderedTransition.track(generation: generation)
+            },
+            onRenderGenerationCompleted: { generation in
+                // 仅匹配当前目标世代的完成回调才结束过渡，露出 WebView。
+                renderedTransition.completeIfMatching(generation: generation)
+            },
+           exportedPage: $exportedPage
+       )
+    }
+
     // MARK: - 文档内容视图
 
     @ViewBuilder
     private var documentContentView: some View {
         ZStack {
-            // Raw 模式视图 — 始终保持存活，避免 NSTextView 被销毁导致 undo 历史丢失
+            // Raw 模式视图 — 始终保持存活，避免 NSTextView 被销毁导致 undo 历史丢失。
+            // 过渡期（renderedTransition.keepsRawVisible）也保持可见，挡住常驻 WebView
+            // 的中间加载状态，直到目标渲染世代确认完成。命中测试仍仅允许真正 Raw 时编辑。
             RawMarkdownView(
                 content: Binding(
                     get: { documentViewModel.content },
@@ -612,20 +670,20 @@ struct DetailView: View {
                 ),
                 fontSize: settings.sourceFontPointSize,
                 contentPadding: settings.contentPaddingPoints,
-                scrollToLine: documentViewModel.scrollToLineRequest,
+                scrollToSourceLine: documentViewModel.scrollToSourceLineRequest,
                 fileURL: documentViewModel.currentFileURL,
                 isActive: documentViewModel.displayMode == .raw,
                 isFindBarVisible: appViewModel.isFindBarVisible,
                 searchRef: textViewSearchRef,
-                onCursorLineNumberChanged: { lineNumber in
-                    documentViewModel.cursorLineNumber = lineNumber
+                onCursorSourceLineChanged: { sourceLine in
+                    documentViewModel.cursorSourceLine = sourceLine
                 },
                 contentVersion: documentViewModel.contentVersion,
                 undoStore: undoStore
             )
-            .opacity(documentViewModel.displayMode == .raw ? 1 : 0)
+            .opacity(documentViewModel.displayMode == .raw || renderedTransition.keepsRawVisible ? 1 : 0)
             .allowsHitTesting(documentViewModel.displayMode == .raw)
-            .onChange(of: documentViewModel.scrollToLineRequest) { _, newValue in
+            .onChange(of: documentViewModel.scrollToSourceLineRequest) { _, newValue in
                 if newValue != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         documentViewModel.clearScrollRequest()
@@ -633,40 +691,17 @@ struct DetailView: View {
                 }
             }
 
-            // 渲染模式视图 — 仅在渲染模式下显示
-            if documentViewModel.displayMode == .rendered {
-                WebViewMarkdownView(
-                    content: documentViewModel.content,
-                    fileURL: documentViewModel.currentFileURL,
-                    contentPadding: settings.contentPaddingPoints,
-                    maxContentWidthFollowsWindow: settings.maxContentWidthFollowsWindow,
-                    scrollToLine: documentViewModel.scrollToLineRequest,
-                    themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
-                    isDark: settings.resolvedThemeType == .dark,
-                    documentCopyEnabled: settings.enableDocumentCopy,
-                    searchQuery: findReplaceViewModel.searchText,
-                    searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
-                    searchWholeWord: findReplaceViewModel.isWholeWord,
-                    searchCurrentIndex: findReplaceViewModel.currentMatchIndex,
-                    isFindBarVisible: appViewModel.isFindBarVisible,
-                    contentVersion: documentViewModel.contentVersion,
-                    onVisibleHeadingChanged: { heading in
-                        activeOutlineLineNumber = heading?.lineNumber
-                    },
-                    onVisibleLineChanged: { lineNumber in
-                        documentViewModel.renderedVisibleLineNumber = lineNumber
-                    },
-                    commandTarget: commandTarget,
-                    onOpenLinkedMarkdownFile: { [weak session] url in
-                        session?.handleLinkedMarkdownFile(url.standardizedFileURL)
-                    },
-                    exportedPage: $exportedPage
-                )
-                .onChange(of: documentViewModel.scrollToLineRequest) { _, newValue in
-                    if newValue != nil {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                            documentViewModel.clearScrollRequest()
-                        }
+            // 渲染模式视图 — 常驻单个 WebView，保留已加载页面和生命周期状态。
+            // 用 opacity 与命中测试控制可见性/交互：Rendered 且过渡完成时显示，
+            // 其余时间隐藏在后台预热。opacity 由 displayMode 与过渡状态共同决定。
+            renderedMarkdownView
+            // Rendered 且过渡已完成时显示 WebView；过渡期 keepsRawVisible 为 true，Raw 覆盖在上层。
+            .opacity(documentViewModel.displayMode == .rendered && !renderedTransition.keepsRawVisible ? 1 : 0)
+            .allowsHitTesting(documentViewModel.displayMode == .rendered && !renderedTransition.keepsRawVisible)
+            .onChange(of: documentViewModel.scrollToSourceLineRequest) { _, newValue in
+                if newValue != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        documentViewModel.clearScrollRequest()
                     }
                 }
             }
@@ -718,7 +753,13 @@ struct DetailView: View {
         .onChange(of: findReplaceViewModel.isWholeWord) { _, _ in performSearch() }
         .onChange(of: findReplaceViewModel.isRegularExpression) { _, _ in performSearch() }
         // 模式/文件切换：废弃旧文档的复制反馈，防止残留对号。
-        .onChange(of: documentViewModel.displayMode) { _, _ in invalidateCopyFeedback() }
+        .onChange(of: documentViewModel.displayMode) { _, newValue in
+            invalidateCopyFeedback()
+            // Rendered→Raw：取消进行中的过渡，Raw 自然接管可见性。
+            if newValue == .raw {
+                renderedTransition.cancel()
+            }
+        }
         .onChange(of: documentViewModel.currentFileURL) { _, _ in invalidateCopyFeedback() }
         // 总开关关闭：立即取消五秒任务并清除对号，避免关闭再开启后复活旧成功态。
         .onChange(of: settings.enableDocumentCopy) { _, _ in invalidateCopyFeedback() }

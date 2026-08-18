@@ -79,7 +79,7 @@ struct WebViewMarkdownView: View {
     let fileURL: URL?
     var contentPadding: CGFloat = 20
     var maxContentWidthFollowsWindow: Bool = false
-    var scrollToLine: Int?
+    var scrollToSourceLine: SourceLine?
     let themeCSS: String
     var isDark: Bool = true
     /// 内容一键复制总开关：控制阅读页右上角整篇内容复制按钮。运行时切换走
@@ -94,7 +94,7 @@ struct WebViewMarkdownView: View {
     /// 用于 reload 操作等场景，即使 content 值未变也需刷新视图
     var contentVersion: Int = 0
     var onVisibleHeadingChanged: ((MarkdownHTMLService.HeadingInfo?) -> Void)?
-    var onVisibleLineChanged: ((Int) -> Void)?
+    var onVisibleLineChanged: ((SourceLine) -> Void)?
     /// 回归修复：本窗口命令目标（由 WindowSceneHost 注入）。视图直接在其上注册 zoom
     /// handler，不再发布独立 focusedSceneValue 覆盖焦点路由，也不在内部临时 @FocusedValue 反查。
     var commandTarget: WindowCommandTarget?
@@ -102,6 +102,17 @@ struct WebViewMarkdownView: View {
     /// 回归修复：Markdown 内链回调。WebView 把点击的本地 Markdown 链接回传给所属
     /// session，按目录内导航或外部打开规则处理，不再全局广播。
     var onOpenLinkedMarkdownFile: ((URL) -> Void)?
+
+    /// 当前是否处于渲染模式。控制渲染闸门：仅 Rendered 时纯 content 变更才请求渲染，
+    /// 进入 Rendered 时请求一次最新快照；切回 Raw 不请求。
+    var isRenderedMode: Bool = false
+    /// 实际 `requestRender()` 发起时同步报告该请求所属世代。DetailView 用它调用
+    /// `RenderedModeTransitionState.track(generation:)`，使 Raw→Rendered 过渡等待真实目标。
+    var onRenderRequested: ((UInt) -> Void)?
+    /// 目标渲染世代的内容已更新或整页加载已结束时报告。仅匹配 `onRenderRequested`
+    /// 报告过的世代才会触发；过期世代、取消或 JavaScript 失败均不报告。DetailView 用它
+    /// 调用 `RenderedModeTransitionState.completeIfMatching(generation:)` 结束过渡。
+    var onRenderGenerationCompleted: ((UInt) -> Void)?
 
     @Environment(\.language) private var language
     /// 当前屏幕像素倍率。变化时经既有 `requestRender()` 走 latest-wins 调度整页重载，
@@ -113,7 +124,7 @@ struct WebViewMarkdownView: View {
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var scrollSyncTimer: Timer?
     @State private var isConfigured = false
-    @State private var pendingScrollToLine: Int?
+    @State private var pendingScrollToSourceLine: SourceLine?
     @State private var zoomLevel: CGFloat = 1.0
     /// 渲染触发收敛：latest-wins 请求世代。`fileURL`/`content`/`contentVersion`
     /// 任一变化只递增世代；`.task(id:)` 在一次 `Task.yield()` 后对最终快照执行唯一渲染。
@@ -125,6 +136,12 @@ struct WebViewMarkdownView: View {
     @State private var loadedRuntimeRequirements: MarkdownHTMLService.MarkdownRuntimeRequirements?
     /// 当前进行中的增量 `MR.replaceContent` 写入任务，新请求或视图消失时取消。
     @State private var contentReplacementTask: Task<Void, Never>?
+    /// 整页加载中等待完成的渲染世代。`page.load` 时记录，`page.isLoading` 变 false 且
+    /// 世代仍最新时通过 `onRenderGenerationCompleted` 报告。用于 loadPage 完成边界。
+    @State private var pendingLoadCompletionGeneration: UInt?
+    /// `.none`（快照无变化）时若页面仍在加载而暂存的等待世代。页面加载结束后补报完成，
+    /// 保证 Raw→Rendered→Raw→Rendered（未修改）这类无内容变化的过渡也能闭合。
+    @State private var pendingNoneCompletionGeneration: UInt?
     /// 持有 navigationDecider，使其生命周期与视图一致，便于注入内链 closure。
     @State private var navigationDecider = MarkdownNavigationDecider()
 
@@ -143,7 +160,8 @@ struct WebViewMarkdownView: View {
                 content: content,
                 contentVersion: contentVersion,
                 fileURL: fileURL,
-                scrollToLine: scrollToLine,
+                isRenderedMode: isRenderedMode,
+                scrollToLine: scrollToSourceLine,
                 pageIsLoading: page.isLoading,
                 themeCSS: themeCSS,
                 contentPadding: contentPadding,
@@ -153,7 +171,7 @@ struct WebViewMarkdownView: View {
                 searchWholeWord: searchWholeWord,
                 searchCurrentIndex: searchCurrentIndex,
                 displayScale: displayScale,
-                onRequestRender: requestRender,
+                onRequestRenderIfNeeded: requestRenderIfNeeded,
                 onScrollToLineChange: handleScrollToLineChange,
                 onLoadingChange: handleLoadingChange,
                 onUpdateThemeCSS: updateThemeCSS,
@@ -197,24 +215,41 @@ struct WebViewMarkdownView: View {
         requestRender()
     }
 
-    /// `scrollToLine` 变化：页面加载中暂存，否则立即滚动。
-    private func handleScrollToLineChange(_ newValue: Int?) {
+    /// `scrollToSourceLine` 变化：页面加载中暂存，否则立即滚动。
+    private func handleScrollToLineChange(_ newValue: SourceLine?) {
         guard let line = newValue else { return }
         if page.isLoading {
-            pendingScrollToLine = line
+            pendingScrollToSourceLine = line
         } else {
             scrollToLineNumber(line)
         }
     }
 
-    /// `page.isLoading` 变化：加载完成后处理待滚动行号并恢复缩放。
+    /// `page.isLoading` 变化：加载完成后处理待滚动源码行、恢复缩放，并补报等待中的完成世代。
+    /// loadPage 与 `.none`（页面仍在加载时）分别记录 `pendingLoadCompletionGeneration` 和
+    /// `pendingNoneCompletionGeneration`，二者可能属于不同世代；加载结束时各自校验
+    /// `renderScheduler.accepts(gen)` 后报告——失效世代被忽略，最新世代补报完成。
     private func handleLoadingChange(_ isLoading: Bool) {
-        if !isLoading, let line = pendingScrollToLine {
-            pendingScrollToLine = nil
+        if !isLoading, let line = pendingScrollToSourceLine {
+            pendingScrollToSourceLine = nil
             scrollToLineNumber(line)
         }
         if !isLoading && zoomLevel != 1.0 {
             restoreZoom()
+        }
+        guard !isLoading else { return }
+
+        if let loadGen = pendingLoadCompletionGeneration {
+            pendingLoadCompletionGeneration = nil
+            if renderScheduler.accepts(loadGen) {
+                onRenderGenerationCompleted?(loadGen)
+            }
+        }
+        if let noneGen = pendingNoneCompletionGeneration {
+            pendingNoneCompletionGeneration = nil
+            if renderScheduler.accepts(noneGen) {
+                onRenderGenerationCompleted?(noneGen)
+            }
         }
     }
 
@@ -227,10 +262,13 @@ struct WebViewMarkdownView: View {
     }
 
     /// `.onDisappear` 清理：取消增量写入、失效世代、清理 zoom handler 与内链 closure。
+    /// 清除两个 pending 完成世代，禁止已销毁页面回调 DetailView。
     private func handleDisappear() {
         scrollSyncTimer?.invalidate()
         contentReplacementTask?.cancel()
         contentReplacementTask = nil
+        pendingLoadCompletionGeneration = nil
+        pendingNoneCompletionGeneration = nil
         _ = renderScheduler.request()
         commandTarget?.zoomHandler = nil
         navigationDecider.onOpenLinkedMarkdownFile = nil
@@ -246,10 +284,24 @@ struct WebViewMarkdownView: View {
 
     /// 请求一次渲染：取消进行中的增量写入并递增世代。不解析 Markdown，也不调用 `page.load`。
     /// 三个文档输入的 `.onChange` 都只调用此方法，把“何时渲染”收敛到一个世代。
-    private func requestRender() {
+    /// 同步报告该请求所属世代，供 DetailView 在 Raw→Rendered 过渡中 `track(generation:)`。
+    @discardableResult
+    private func requestRender() -> UInt {
         contentReplacementTask?.cancel()
         contentReplacementTask = nil
-        _ = renderScheduler.request()
+        let generation = renderScheduler.request()
+        onRenderRequested?(generation)
+        return generation
+    }
+
+    /// 渲染闸门入口：按变更种类与当前模式决定是否请求。`.content` 仅 Rendered 请求；
+    /// `.fileURL`/`.contentVersion` 始终请求（预热隐藏 WebView）；`.displayMode` 仅进入
+    /// Rendered 请求。闸门否决时直接返回，不递增世代、不报告，隐藏 WebView 保持上次快照。
+    private func requestRenderIfNeeded(change: WebViewRenderChange) {
+        guard WebViewRenderEligibility.shouldRequest(
+            change: change, isRenderedMode: isRenderedMode
+        ) else { return }
+        _ = requestRender()
     }
 
     /// 对当前输入构造最终快照，按策略执行唯一渲染动作。
@@ -263,12 +315,16 @@ struct WebViewMarkdownView: View {
 
         switch WebViewRenderPolicy.action(previous: lastAppliedRender, next: next) {
         case .none:
+            // 快照无变化：页面已加载完成则立即报告该世代完成；仍在加载则暂存，
+            // 待 `page.isLoading` 变 false 时补报。否则 Raw→Rendered→Raw→Rendered
+            // （未修改）这类无内容变化的过渡会因等不到 complete 而永远卡住。
+            reportCompletionIfIdle(generation: generation)
             return
         case .loadPage:
             contentReplacementTask?.cancel()
             contentReplacementTask = nil
             lastAppliedRender = next
-            loadContent(next)
+            loadContent(next, generation: generation)
         case .replaceContent:
             lastAppliedRender = next
             replaceContent(next, generation: generation)
@@ -311,19 +367,22 @@ struct WebViewMarkdownView: View {
         exportedPage = page
     }
 
-    private func loadContent(_ snapshot: WebViewRenderSnapshot) {
+    private func loadContent(_ snapshot: WebViewRenderSnapshot, generation: UInt) {
         let baseURL = snapshot.fileURL?.deletingLastPathComponent()
         let renderResult = MarkdownHTMLService.render(snapshot.content, baseURL: baseURL)
         let runtimeRequirements = MarkdownHTMLService.MarkdownRuntimeRequirements.detect(in: renderResult)
-        loadPage(snapshot, renderResult: renderResult, runtimeRequirements: runtimeRequirements)
+        loadPage(snapshot, renderResult: renderResult, runtimeRequirements: runtimeRequirements, generation: generation)
     }
 
     /// 用已完成的单次 `RenderResult` 与检测到的运行时需求整页装配。不再次调用 `render`。
     /// 完整加载路径与运行时升级路径共用，确保每次整页加载都记录 `loadedRuntimeRequirements`。
+    /// `generation` 记入 `pendingLoadCompletionGeneration`，待 `page.isLoading` 变 false 且世代
+    /// 仍最新时通过 `onRenderGenerationCompleted` 报告——这是 loadPage 的真实完成边界。
     private func loadPage(
         _ snapshot: WebViewRenderSnapshot,
         renderResult: MarkdownHTMLService.RenderResult,
-        runtimeRequirements: MarkdownHTMLService.MarkdownRuntimeRequirements
+        runtimeRequirements: MarkdownHTMLService.MarkdownRuntimeRequirements,
+        generation: UInt
     ) {
         let baseURL = snapshot.fileURL?.deletingLastPathComponent()
         loadedRuntimeRequirements = runtimeRequirements
@@ -354,17 +413,22 @@ struct WebViewMarkdownView: View {
         scrollPosition = ScrollPosition(edge: .top)
 
         let effectiveBaseURL = baseURL ?? URL(string: "about:blank")!
+        // 整页加载开始：记录等待完成的世代。`page.isLoading` 变 false 且世代仍最新时
+        // 经 `handleLoadingChange` 报告完成。先置 pending 再 load，避免加载过快在回调
+        // 注册前结束导致漏报。
+        pendingNoneCompletionGeneration = nil
+        pendingLoadCompletionGeneration = generation
         _ = page.load(html: html, baseURL: effectiveBaseURL)
 
         // 页面加载后同步查找栏显隐（查找栏打开期间渲染按钮隐藏）。
         syncDocumentCopyButtonVisibility()
 
-        if let line = scrollToLine {
-            pendingScrollToLine = line
-            let capturedLine = line
+        if let sourceLine = scrollToSourceLine {
+            pendingScrollToSourceLine = sourceLine
+            let capturedLine = sourceLine
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [capturedLine] in
-                if pendingScrollToLine == capturedLine {
-                    pendingScrollToLine = nil
+                if pendingScrollToSourceLine == capturedLine {
+                    pendingScrollToSourceLine = nil
                     scrollToLineNumber(capturedLine)
                 }
             }
@@ -382,7 +446,7 @@ struct WebViewMarkdownView: View {
             current: loadedRuntimeRequirements,
             next: requirements
         ) == .loadPage {
-            loadPage(snapshot, renderResult: renderResult, runtimeRequirements: requirements)
+            loadPage(snapshot, renderResult: renderResult, runtimeRequirements: requirements, generation: generation)
             return
         }
 
@@ -391,11 +455,41 @@ struct WebViewMarkdownView: View {
         contentReplacementTask?.cancel()
         contentReplacementTask = Task { @MainActor [escapedHTML, generation, page] in
             guard !Task.isCancelled, renderScheduler.accepts(generation) else { return }
-            _ = try? await page.callJavaScript("MR.replaceContent('\(escapedHTML)')")
+            // 仅当 `MR.replaceContent` 返回显式 true 且世代仍最新时才报告完成。
+            // `WebPage.callJavaScript(_ functionBody:)` 把字符串当作 JS 函数体执行，
+            // 不是表达式——必须用 `return` 才能把 Boolean 回执桥接回 Swift；裸表达式
+            // `MR.replaceContent(...)` 会返回 nil，导致永不完成（这正是修复前的根因）。
+            // `false`（未找到 #mr-content）、`nil`（桥接无值）、非 Boolean 桥接值
+            // 以及过期 generation 都不报告——避免过渡完成时用户看到旧渲染或空白
+            // （固定合同 3）。catch 不打印可见错误、不结束过渡，也不重试或 reload。
+            do {
+                let result = try await page.callJavaScript("return MR.replaceContent('\(escapedHTML)')")
+                guard !Task.isCancelled,
+                      WebViewContentReplacementCompletionPolicy.shouldComplete(
+                          javaScriptResult: result,
+                          isCurrentGeneration: renderScheduler.accepts(generation)
+                      ) else {
+                    return
+                }
+                onRenderGenerationCompleted?(generation)
+            } catch {
+                return
+            }
         }
     }
 
-    private func scrollToLineNumber(_ lineNumber: Int) {
+    /// 快照无变化（`.none`）时的完成报告：页面空闲则立即报告，否则暂存世代，
+    /// 待 `page.isLoading` 变 false 时由 `handleLoadingChange` 补报。
+    private func reportCompletionIfIdle(generation: UInt) {
+        if page.isLoading {
+            pendingNoneCompletionGeneration = generation
+        } else {
+            onRenderGenerationCompleted?(generation)
+        }
+    }
+
+    private func scrollToLineNumber(_ sourceLine: SourceLine) {
+        let lineNumber = sourceLine.oneBased
         Task { @MainActor [lineNumber] in
             _ = try? await page.callJavaScript("MR.scrollToLine(\(lineNumber))")
         }
@@ -492,8 +586,9 @@ struct WebViewMarkdownView: View {
         scrollSyncTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
             Task { @MainActor in
                 if let lineResult = try? await page.callJavaScript("MR.getTopVisibleLine()"),
-                   let lineNumber = lineResult as? Int {
-                    onVisibleLineChanged?(lineNumber)
+                   let lineNumber = lineResult as? Int,
+                   lineNumber >= 1 {
+                    onVisibleLineChanged?(SourceLine(oneBased: lineNumber))
                 }
 
                 guard let result = try? await page.callJavaScript("MR.getVisibleHeading()") else {
@@ -508,7 +603,9 @@ struct WebViewMarkdownView: View {
                     onVisibleHeadingChanged?(nil)
                     return
                 }
-                onVisibleHeadingChanged?(MarkdownHTMLService.HeadingInfo(id: id, level: level, title: title, lineNumber: lineNumber))
+                // JS 端无定位标题返回 lineNumber=0；构造 SourceLine 仅对正整数，否则 sourceLine=nil。
+                let sourceLine = lineNumber >= 1 ? SourceLine(oneBased: lineNumber) : nil
+                onVisibleHeadingChanged?(MarkdownHTMLService.HeadingInfo(id: id, level: level, title: title, sourceLine: sourceLine))
             }
         }
     }
@@ -603,7 +700,8 @@ private struct DocumentContentEventsModifier: ViewModifier {
     let content: String
     let contentVersion: Int
     let fileURL: URL?
-    let scrollToLine: Int?
+    let isRenderedMode: Bool
+    let scrollToLine: SourceLine?
     let pageIsLoading: Bool
     let themeCSS: String
     let contentPadding: CGFloat
@@ -613,8 +711,10 @@ private struct DocumentContentEventsModifier: ViewModifier {
     let searchWholeWord: Bool
     let searchCurrentIndex: Int
     let displayScale: CGFloat
-    let onRequestRender: () -> Void
-    let onScrollToLineChange: (Int?) -> Void
+    /// 按变更种类走渲染闸门：`.content` 仅 Rendered 请求；`.fileURL`/`.contentVersion`/
+    /// `.displayScale` 始终请求（预热隐藏 WebView）；`.displayMode` 仅进入 Rendered 请求。
+    let onRequestRenderIfNeeded: (WebViewRenderChange) -> Void
+    let onScrollToLineChange: (SourceLine?) -> Void
     let onLoadingChange: (Bool) -> Void
     let onUpdateThemeCSS: (String) -> Void
     let onUpdateContentPadding: (CGFloat) -> Void
@@ -624,9 +724,12 @@ private struct DocumentContentEventsModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: self.content) { _, _ in onRequestRender() }
-            .onChange(of: contentVersion) { _, _ in onRequestRender() }
-            .onChange(of: fileURL) { _, _ in onRequestRender() }
+            // 纯内容变更：仅 Rendered 时请求渲染；Raw 编辑期闸门否决，隐藏 WebView 保持快照。
+            .onChange(of: self.content) { _, _ in onRequestRenderIfNeeded(.content) }
+            .onChange(of: contentVersion) { _, _ in onRequestRenderIfNeeded(.contentVersion) }
+            .onChange(of: fileURL) { _, _ in onRequestRenderIfNeeded(.fileURL) }
+            // isRenderedMode false→true：请求一次最新快照；true→false：闸门否决，不请求。
+            .onChange(of: isRenderedMode) { _, _ in onRequestRenderIfNeeded(.displayMode) }
             .onChange(of: scrollToLine) { _, newValue in onScrollToLineChange(newValue) }
             .onChange(of: pageIsLoading) { _, isLoading in onLoadingChange(isLoading) }
             .onChange(of: themeCSS) { _, _ in onUpdateThemeCSS(themeCSS) }
@@ -636,6 +739,7 @@ private struct DocumentContentEventsModifier: ViewModifier {
             .onChange(of: searchCaseSensitive) { _, _ in onUpdateSearchHighlight() }
             .onChange(of: searchWholeWord) { _, _ in onUpdateSearchHighlight() }
             .onChange(of: searchCurrentIndex) { _, newValue in onSetSearchCurrent(newValue) }
-            .onChange(of: displayScale) { _, _ in onRequestRender() }
+            // 屏幕倍率变化需重载注入对应缓存图标 CSS 变量，始终请求，与模式无关。
+            .onChange(of: displayScale) { _, _ in onRequestRenderIfNeeded(.contentVersion) }
     }
 }

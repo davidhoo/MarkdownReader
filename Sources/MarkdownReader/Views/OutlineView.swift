@@ -5,7 +5,7 @@ import MarkdownReaderKit
 struct OutlineView: View {
     let items: [OutlineItem]
     let onSelect: (OutlineItem) -> Void
-    var activeLineNumber: Int?
+    var activeLineNumber: SourceLine?
     @Environment(\.themeColors) private var themeColors
     @Environment(\.language) private var language
 
@@ -106,7 +106,7 @@ struct OutlineView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .hoverBackground(themeColors: themeColors, isActive: item.lineNumber == activeLineNumber)
+        .hoverBackground(themeColors: themeColors, isActive: item.sourceLine == activeLineNumber)
     }
 
     // MARK: - 样式辅助

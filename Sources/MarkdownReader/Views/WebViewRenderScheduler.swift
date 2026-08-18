@@ -61,6 +61,25 @@ struct WebViewRenderScheduler {
     }
 }
 
+/// 纯完成判定：增量内容替换是否可以向过渡层报告完成。
+///
+/// 与 SwiftUI/WebKit 无关，以便单元测试锁定规则：
+/// 只有 `MR.replaceContent` 返回**显式** `true` 且世代仍为最新请求时才完成。
+/// `false`（目标节点不存在）、`nil`（JS 抛错被 catch 吞掉、裸表达式无 return 导致
+/// `WebPage.callJavaScript` 桥接无值）、非 Boolean（字符串 `"true"`、数字等桥接类型）
+/// 以及过期世代一律不完成——避免在 DOM 未真正替换时结束 Raw 过渡层，让用户看到旧
+/// 渲染或空白 WebView。
+///
+/// 该策略只判定完成，不替代 `WebViewRenderScheduler` 的 latest-wins 世代校验。
+enum WebViewContentReplacementCompletionPolicy {
+    static func shouldComplete(
+        javaScriptResult: Any?,
+        isCurrentGeneration: Bool
+    ) -> Bool {
+        isCurrentGeneration && (javaScriptResult as? Bool == true)
+    }
+}
+
 /// 纯运行时升级策略：依据“已加载运行时需求”与“下一份 HTML 的运行时需求”选择渲染动作。
 ///
 /// 与 SwiftUI/WebKit 无关，以便单元测试锁定规则：
@@ -75,5 +94,91 @@ enum WebViewRuntimePolicy {
         next: MarkdownHTMLService.MarkdownRuntimeRequirements
     ) -> WebViewRenderAction {
         current == next ? .replaceContent : .loadPage
+    }
+}
+
+/// 渲染模式过渡的纯状态机。
+///
+/// 管理 Raw 过渡层在 Raw → Rendered 切换期间是否保持可见。它只回答一个问题：
+/// “现在是否还要挡住 WebView，不让用户看到中间的空白或旧渲染内容”。它不取代
+/// `WebViewRenderScheduler` 的 latest-wins 世代判定——后者决定哪个渲染请求有效，
+/// 这里只决定 Raw 何时可以退场。
+///
+/// 生命周期：
+/// 1. `begin()`：Raw → Rendered 切换的第一步，立即要求 Raw 保持可见，此时还不知道
+///    目标渲染世代。
+/// 2. `track(generation:)`：WebView 真正发起 `requestRender()` 后报告其世代，覆盖
+///    之前的 target；新 track 使任何旧世代的完成回调失效。
+/// 3. `completeIfMatching(generation:)`：只有匹配当前 target 的完成回调才能结束过渡；
+///    不匹配返回 false 且不改状态。
+/// 4. `cancel()`：Rendered → Raw 或 DetailView 消失时清理。
+struct RenderedModeTransitionState: Equatable {
+    private(set) var targetGeneration: UInt?
+    private(set) var keepsRawVisible = false
+
+    /// 开始一次 Raw → Rendered 过渡：Raw 保持可见，等待真实目标世代。
+    mutating func begin() {
+        targetGeneration = nil
+        keepsRawVisible = true
+    }
+
+    /// 记录 WebView 实际请求的渲染世代。新世代覆盖旧 target，使旧世代的完成回调失效。
+    mutating func track(generation: UInt) {
+        guard keepsRawVisible else { return }
+        targetGeneration = generation
+    }
+
+    /// 仅当传入世代匹配当前目标世代时结束过渡；否则保持不变。
+    @discardableResult
+    mutating func completeIfMatching(generation: UInt) -> Bool {
+        guard keepsRawVisible, let target = targetGeneration, generation == target else {
+            return false
+        }
+        targetGeneration = nil
+        keepsRawVisible = false
+        return true
+    }
+
+    /// 取消过渡：Rendered → Raw 或视图消失。
+    mutating func cancel() {
+        targetGeneration = nil
+        keepsRawVisible = false
+    }
+}
+
+/// 文档输入变更的种类，用于渲染闸门判断。
+///
+/// 只区分四个驱动 `requestRender` 的来源：纯内容编辑、文件切换、强制刷新世代、
+/// 显示模式切换。它不携带具体值，仅作 eligibility 判定的标签，保持策略与
+/// SwiftUI/WebKit 无关。
+enum WebViewRenderChange {
+    case content
+    case fileURL
+    case contentVersion
+    case displayMode
+}
+
+/// 纯渲染闸门：决定某类文档输入变更是否应当请求隐藏的常驻 WebView 重渲染。
+///
+/// 与 SwiftUI/WebKit 无关，以便单元测试锁定规则：
+/// - `content`：仅 Rendered 模式请求。Raw 编辑时隐藏 WebView 保持上次已应用快照，
+///   不随每次击键重渲染（固定合同 2）。
+/// - `fileURL`：始终请求，保证新文件进入内容区时隐藏 WebView 在后台预热，
+///   切到 Rendered 时已是最新文件。
+/// - `contentVersion`：始终请求，保留 Reload、外部刷新及同内容强制刷新语义。
+/// - `displayMode`：仅进入 Rendered 时请求最新快照；切回 Raw 不请求（无意义）。
+enum WebViewRenderEligibility {
+    static func shouldRequest(
+        change: WebViewRenderChange,
+        isRenderedMode: Bool
+    ) -> Bool {
+        switch change {
+        case .content:
+            return isRenderedMode
+        case .fileURL, .contentVersion:
+            return true
+        case .displayMode:
+            return isRenderedMode
+        }
     }
 }

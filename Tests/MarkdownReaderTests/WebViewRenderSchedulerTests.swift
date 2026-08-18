@@ -134,4 +134,89 @@ final class WebViewRenderSchedulerTests: XCTestCase {
         let next = MarkdownRuntimeRequirements(requiresMermaid: false, requiresKaTeX: false)
         XCTAssertEqual(WebViewRuntimePolicy.action(current: nil, next: next), .loadPage)
     }
+
+    // MARK: - 渲染模式过渡状态机
+
+    func testRenderedTransitionWaitsForRequestedGeneration() {
+        var transition = RenderedModeTransitionState()
+        transition.begin()
+        transition.track(generation: 8)
+
+        XCTAssertTrue(transition.keepsRawVisible)
+        XCTAssertFalse(transition.completeIfMatching(generation: 7))
+        XCTAssertTrue(transition.keepsRawVisible)
+        XCTAssertTrue(transition.completeIfMatching(generation: 8))
+        XCTAssertFalse(transition.keepsRawVisible)
+    }
+
+    func testNewTransitionInvalidatesOlderCompletion() {
+        var transition = RenderedModeTransitionState()
+        transition.begin()
+        transition.track(generation: 4)
+        transition.track(generation: 5)
+
+        XCTAssertFalse(transition.completeIfMatching(generation: 4))
+        XCTAssertTrue(transition.completeIfMatching(generation: 5))
+    }
+
+    // MARK: - 渲染闸门：Raw 编辑期不触发隐藏 WebView 重渲染
+
+    func testRawContentEditDoesNotRequestWebViewRender() {
+        XCTAssertFalse(WebViewRenderEligibility.shouldRequest(
+            change: .content, isRenderedMode: false
+        ))
+    }
+
+    func testFileAndForcedRefreshStillPrewarmWhileRaw() {
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .fileURL, isRenderedMode: false
+        ))
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .contentVersion, isRenderedMode: false
+        ))
+    }
+
+    func testEnteringRenderedModeRequestsLatestContent() {
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .displayMode, isRenderedMode: true
+        ))
+    }
+
+    func testRenderedContentEditRequestsWebViewRender() {
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .content, isRenderedMode: true
+        ))
+    }
+
+    func testReturningToRawModeDoesNotRequestWebViewRender() {
+        XCTAssertFalse(WebViewRenderEligibility.shouldRequest(
+            change: .displayMode, isRenderedMode: false
+        ))
+    }
+
+    // MARK: - 内容替换完成判定：显式 Boolean 回执
+
+    func testReplacementCompletionRequiresTrueJavaScriptAcknowledgement() {
+        XCTAssertTrue(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: true, isCurrentGeneration: true
+        ))
+    }
+
+    func testReplacementCompletionRejectsFalseNilAndUnexpectedResult() {
+        XCTAssertFalse(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: false, isCurrentGeneration: true
+        ))
+        XCTAssertFalse(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: nil, isCurrentGeneration: true
+        ))
+        XCTAssertFalse(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: "true", isCurrentGeneration: true
+        ))
+    }
+
+    func testReplacementCompletionRejectsSuccessfulButStaleGeneration() {
+        XCTAssertFalse(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: true, isCurrentGeneration: false
+        ))
+    }
 }
