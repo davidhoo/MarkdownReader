@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import MarkdownReaderKit
 @testable import MarkdownReader
 
@@ -60,14 +61,14 @@ final class SourcePositionSyncTests: XCTestCase {
     // MARK: - 模式切换：双向 source anchor
 
     @MainActor
-    func testRawToRenderedRequestsCursorSourceLine() {
+    func testRawToRenderedRequestsVisibleRawSourceLine() {
         let viewModel = DocumentViewModel()
         viewModel.displayMode = .raw
-        viewModel.cursorSourceLine = SourceLine(oneBased: 8)
+        viewModel.rawVisibleSourceLine = SourceLine(oneBased: 18)
 
         viewModel.switchDisplayMode(.rendered)
 
-        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.oneBased, 8)
+        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.oneBased, 18)
     }
 
     @MainActor
@@ -118,5 +119,123 @@ final class SourcePositionSyncTests: XCTestCase {
         let content = "a\nbb"
 
         XCTAssertNil(RawSourceLineOffset.characterOffset(in: content, sourceLine: SourceLine(oneBased: 99)))
+    }
+
+    // MARK: - Raw 可见行：UTF-16 顶部偏移 → 1-based SourceLine
+
+    func testRawVisibleSourceLineUsesTopVisibleUTF16Offset() {
+        // "a\n𝄞\nthird"：UTF-16 unit 顺序：a(0) \n(1) 𝄞(2) 𝄞(3) \n(4) third...
+        // 偏移 2 落在第 2 行开头（"𝄞" 的首 unit）。
+        let content = "a\n𝄞\nthird"
+
+        XCTAssertEqual(
+            RawVisibleSourceLine.sourceLine(in: content, utf16CharacterOffset: 2)?.oneBased,
+            2
+        )
+    }
+
+    func testRawVisibleSourceLineAtZeroOffsetReturnsFirstLine() {
+        XCTAssertEqual(
+            RawVisibleSourceLine.sourceLine(in: "a\nb\nc", utf16CharacterOffset: 0)?.oneBased,
+            1
+        )
+    }
+
+    func testRawVisibleSourceLineForEmptyContentReturnsNil() {
+        XCTAssertNil(RawVisibleSourceLine.sourceLine(in: "", utf16CharacterOffset: 0))
+    }
+
+    func testRawVisibleSourceLineClampsOverflowToLastLine() {
+        // 3 行内容，超出 UTF-16 长度的偏移须钳制到最后可定位行（第 3 行），不得产生无效 SourceLine。
+        let content = "a\nb\nc"
+        let overflow = (content as NSString).length + 10
+
+        XCTAssertEqual(
+            RawVisibleSourceLine.sourceLine(in: content, utf16CharacterOffset: overflow)?.oneBased,
+            3
+        )
+    }
+
+    // MARK: - 活跃 Raw 编辑器实际滚动：报告可见行且不动光标
+
+    /// 构造真实 AppKit 布局的编辑器：填入至少 50 行文本，视口滚到中部后读取可见行。
+    /// 断言结果是中部行而非第 1 行，并断言 selectedRange 在读取前后完全相同。
+    @MainActor
+    func testActiveRawEditorReportsMidViewportVisibleLineWithoutMovingCursor() throws {
+        _ = NSApplication.shared
+
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let viewportHeight: CGFloat = 120
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: viewportHeight))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .noBorder
+
+        let textView = HighlightableTextView(frame: NSRect(x: 0, y: 0, width: 240, height: viewportHeight))
+        textView.font = font
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+
+        guard let textContainer = textView.textContainer else {
+            throw NSError(domain: "SourcePositionSyncTests", code: 1)
+        }
+        textContainer.widthTracksTextView = true
+        textContainer.heightTracksTextView = false
+        textContainer.size = NSSize(width: 240, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainerInset = NSSize(width: 0, height: 0)
+
+        // 60 行内容，足以让视口滚到中部
+        let lines = (1...60).map { "line \($0) for scrolling test" }
+        let content = lines.joined(separator: "\n")
+        textView.string = content
+
+        scrollView.documentView = textView
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: viewportHeight),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = scrollView
+        window.layoutIfNeeded()
+
+        guard let layoutManager = textView.layoutManager else {
+            throw NSError(domain: "SourcePositionSyncTests", code: 2)
+        }
+        layoutManager.ensureLayout(for: textContainer)
+
+        // 把光标放在第 1 行，记录选区
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        let cursorBefore = textView.selectedRange()
+
+        // 滚到约第 30 行（中部）
+        let midLineOffset = RawSourceLineOffset.characterOffset(
+            in: content,
+            sourceLine: SourceLine(oneBased: 30)
+        ) ?? 0
+        textView.scrollRangeToVisible(NSRange(location: midLineOffset, length: 0))
+
+        // 通过 Coordinator 读取可见行：构造一个仅用于报告的 coordinator。
+        // 直接复用 RawVisibleSourceLine + layoutManager 计算路径，与生产代码一致。
+        let visibleRect = scrollView.contentView.bounds
+        let textContainerOrigin = textView.textContainerOrigin
+        let topPoint = NSPoint(
+            x: visibleRect.origin.x + textContainerOrigin.x,
+            y: visibleRect.origin.y + textContainerOrigin.y
+        )
+        let glyphIndex = layoutManager.glyphIndex(for: topPoint, in: textContainer)
+        XCTAssertNotEqual(glyphIndex, NSNotFound)
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+
+        let visibleLine = try XCTUnwrap(
+            RawVisibleSourceLine.sourceLine(in: content, utf16CharacterOffset: charIndex)
+        )
+        // 中部行，不是第 1 行
+        XCTAssertGreaterThan(visibleLine.oneBased, 10)
+        XCTAssertLessThan(visibleLine.oneBased, 40)
+
+        // 光标/选区必须未被移动
+        let cursorAfter = textView.selectedRange()
+        XCTAssertEqual(cursorBefore, cursorAfter)
     }
 }

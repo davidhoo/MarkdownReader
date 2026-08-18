@@ -188,6 +188,38 @@ enum RawSourceLineOffset {
     }
 }
 
+/// 将 Raw 编辑器视口顶部的 UTF-16 字符偏移转换为 1-based `SourceLine`。
+///
+/// 纯逻辑 helper：不触碰 AppKit 对象、滚动视图或选区。NSTextView 的
+/// NSRange 以 UTF-16 unit 计量，因此这里同样按 UTF-16 统计前缀中的换行数。
+/// 超出 `(content as NSString).length` 的偏移钳制至最后可定位行，避免产生
+/// 无效 `SourceLine`；空内容返回 nil。
+enum RawVisibleSourceLine {
+    static func sourceLine(in content: String, utf16CharacterOffset offset: Int) -> SourceLine? {
+        let nsContent = content as NSString
+        let length = nsContent.length
+        guard length > 0 else { return nil }
+
+        let clamped = min(max(offset, 0), length)
+        let prefix = nsContent.substring(to: clamped)
+
+        // 前缀中换行数即 0-based 行索引；1-based 行号 = 换行数 + 1。
+        // 若偏移落在最后一个换行之后（视口顶部已是文末空行），换行数即等于总行数-1，
+        // 构造出的行号仍是有效的最后行。
+        var newlineCount = 0
+        for char in prefix.unicodeScalars where char == "\n" {
+            newlineCount += 1
+        }
+
+        // totalLines 至少为 1（length > 0 时内容非空字符串，至少含一个字符即第 1 行）。
+        // 当内容以 "\n" 结尾时 components(separatedBy:) 会多出一个空字符串尾行，
+        // newlineCount 不会超过最后一个真实行的索引，钳制确保不越界。
+        let totalLines = content.components(separatedBy: "\n").count
+        let zeroBasedIndex = min(newlineCount, totalLines - 1)
+        return SourceLine(oneBased: zeroBasedIndex + 1)
+    }
+}
+
 /// NSTextView 子类，支持在高亮期间抑制自动滚动
 /// 防止 setSelectedRange / 布局变化触发 scrollRangeToVisible 导致跳动
 class HighlightableTextView: NSTextView {
@@ -319,8 +351,10 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
     var searchRef: TextViewSearchRef?
     /// 查找面板是否可见，可见时不抢占焦点
     var isFindBarVisible: Bool = false
-    /// 光标所在源码行变化回调（1-based SourceLine）
-    var onCursorSourceLineChanged: ((SourceLine) -> Void)?
+    /// Raw 编辑器实际可见区域顶部源码行变化回调（1-based SourceLine）。
+    /// 仅活跃（isActive）编辑器滚动或程序化跳转后报告；不得调用 requestScroll，
+    /// 以免与 Raw → Rendered 锚点回写形成滚动回环。
+    var onVisibleSourceLineChanged: ((SourceLine) -> Void)?
    /// 内容版本号，变化时强制用 ViewModel 内容覆盖编辑器（阻止 firstResponder 回写）
    /// 用于 reload 操作：ViewModel 更新了 content 但 NSTextView 仍持有旧内容
    var contentVersion: Int = 0
@@ -414,6 +448,30 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         context.coordinator.scrollView = scrollView
         context.coordinator.wasActive = isActive
         context.coordinator.previousThemeColors = themeColors
+
+        // 监听活跃编辑器实际滚动：仅报告视口顶部源码行，不触碰选区、不调用 requestScroll。
+        // 防抖 100ms，避免连续拖动滚动条产生高频回写。
+        let clipView = scrollView.contentView
+        clipView.postsBoundsChangedNotifications = true
+        // 用 Unmanaged<Coordinator> 把弱引用包装进 @Sendable 闭包：Coordinator 是
+        // NSViewRepresentable 持有的 NSObject，observer 在 deinit 中移除，闭包
+        // 仅在主线程（queue: .main）执行，规避 Swift 6 对非 Sendable 捕获的限制。
+        final class CoordinatorBox: @unchecked Sendable {
+            weak var coordinator: Coordinator?
+            init(_ coordinator: Coordinator) { self.coordinator = coordinator }
+        }
+        let box = CoordinatorBox(context.coordinator)
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clipView,
+            queue: .main
+        ) { _ in
+            // queue: .main 保证主线程；assumeIsolated 桥接到 @MainActor。
+            MainActor.assumeIsolated {
+                box.coordinator?.scheduleVisibleLineReport()
+            }
+        }
+        context.coordinator.boundsObserver = observer
         searchRef?.textView = textView
 
         // 记录当前 appearance，后续 updateNSView 中检测变化
@@ -543,8 +601,10 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
 
         // 滚动到指定源码行
         if let sourceLine = scrollToSourceLine {
-            DispatchQueue.main.async {
-                scrollToLineInTextView(textView, sourceLine: sourceLine, content: textView.string)
+            DispatchQueue.main.async { [context] in
+                self.scrollToLineInTextView(textView, sourceLine: sourceLine, content: textView.string)
+                // 动画结束后报告一次可见行，覆盖 Raw 内大纲/查找跳转后切模式的回归点。
+                context.coordinator.reportVisibleSourceLineOnce()
             }
         }
     }
@@ -622,6 +682,17 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         var lastAppearanceToken: String?
         /// 上次处理的 contentVersion，用于检测程序化内容更新（reload/load）
         var lastContentVersion: Int = 0
+        /// boundsDidChange 观察者 token，deinit 时移除
+        var boundsObserver: NSObjectProtocol?
+        /// 滚动防抖 work item
+        var visibleLineDebounce: DispatchWorkItem?
+
+        deinit {
+            if let observer = boundsObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            visibleLineDebounce?.cancel()
+        }
 
         init(_ parent: SyntaxHighlightedEditor) {
             self.parent = parent
@@ -656,8 +727,6 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             // 更新绑定
             parent.content = newContent
 
-            notifyCursorLineNumber(textView)
-
             // 防抖高亮：延迟 50ms 重新高亮，避免每次按键都触发
             highlightWorkItem?.cancel()
             let item = DispatchWorkItem { [weak self] in
@@ -668,17 +737,67 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView = textView else { return }
-            notifyCursorLineNumber(textView)
+            // 模式切换锚点已改用可见行（onVisibleSourceLineChanged），不再追踪光标行。
         }
 
+        // MARK: - 可见行报告（仅活跃编辑器）
+
+        /// boundsDidChange 防抖入口：100ms 内合并多次滚动通知。
         @MainActor
-        private func notifyCursorLineNumber(_ textView: NSTextView) {
-            let location = textView.selectedRange().location
-            let text = textView.string
-            // 1-based line number, consistent with HTML data-line and SourceLine
-            let lineNumber = text[..<text.index(text.startIndex, offsetBy: min(location, text.count))].components(separatedBy: "\n").count
-            parent.onCursorSourceLineChanged?(SourceLine(oneBased: lineNumber))
+        func scheduleVisibleLineReport() {
+            visibleLineDebounce?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                self?.reportVisibleSourceLine()
+            }
+            visibleLineDebounce = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: item)
+        }
+
+        /// 程序化跳转（大纲/查找）动画结束后由 scrollToLineInTextView 调用，
+        /// 报告一次最终可见行。即便用户没有再次手动滚动，下一次切到 Rendered
+        /// 仍使用新位置。
+        @MainActor
+        func reportVisibleSourceLineOnce() {
+            visibleLineDebounce?.cancel()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.reportVisibleSourceLine()
+            }
+        }
+
+        /// 读取视口顶部 UTF-16 偏移并转为 1-based SourceLine。
+        /// 缺少 layout / textContainer 时不猜测行号，等待下一次通知。
+        /// 严禁调用 requestScroll，严禁触碰 setSelectedRange。
+        @MainActor
+        private func reportVisibleSourceLine() {
+            // 仅活跃 Raw 编辑器可写回 rawVisibleSourceLine；隐藏的常驻 Raw
+            // 不得覆盖 Rendered 状态。
+            guard parent.isActive else { return }
+            guard let textView, let scrollView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return }
+
+            let content = textView.string
+            guard !content.isEmpty else { return }
+
+            let visibleRect = scrollView.contentView.bounds
+            let textContainerOrigin = textView.textContainerOrigin
+            // 视口顶部在文本容器坐标系中的点
+            let topPoint = NSPoint(
+                x: visibleRect.origin.x + textContainerOrigin.x,
+                y: visibleRect.origin.y + textContainerOrigin.y
+            )
+
+            let glyphIndex = layoutManager.glyphIndex(for: topPoint, in: textContainer)
+            guard glyphIndex != NSNotFound,
+                  glyphIndex < layoutManager.numberOfGlyphs else { return }
+            let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+
+            let sourceLine = RawVisibleSourceLine.sourceLine(
+                in: content,
+                utf16CharacterOffset: charIndex
+            )
+            guard let sourceLine else { return }
+            parent.onVisibleSourceLineChanged?(sourceLine)
         }
 
         @MainActor

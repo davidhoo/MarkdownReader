@@ -13,7 +13,8 @@ struct RawMarkdownView: View {
     var isActive: Bool = false
     var isFindBarVisible: Bool = false
     var searchRef: TextViewSearchRef?
-    var onCursorSourceLineChanged: ((SourceLine) -> Void)?
+    /// 活跃 Raw 编辑器实际可见行回调，透传给 SyntaxHighlightedEditor。
+    var onVisibleSourceLineChanged: ((SourceLine) -> Void)?
     /// 内容版本号，变化时强制用 ViewModel 内容覆盖编辑器（阻止回写）
     /// 用于 reload 操作：ViewModel 更新了 content 但 NSTextView 仍持有旧内容
     var contentVersion: Int = 0
@@ -31,7 +32,7 @@ struct RawMarkdownView: View {
             isActive: isActive,
             searchRef: searchRef,
             isFindBarVisible: isFindBarVisible,
-            onCursorSourceLineChanged: onCursorSourceLineChanged,
+            onVisibleSourceLineChanged: onVisibleSourceLineChanged,
             contentVersion: contentVersion,
             undoStore: undoStore
         )

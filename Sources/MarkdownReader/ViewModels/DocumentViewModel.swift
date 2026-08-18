@@ -95,9 +95,9 @@ final class DocumentViewModel {
     /// Raw 与 Rendered 共用同一 1-based `SourceLine` 锚点，避免单位混淆。
     var scrollToSourceLineRequest: SourceLine?
 
-    /// 当前光标所在源码行（1-based），Raw 模式下由编辑器实时更新。
-    /// Raw → Rendered 切换时作为渲染视图的滚动锚点。
-    var cursorSourceLine: SourceLine = .first
+    /// Raw 编辑器当前可见区域顶部的源码行（1-based），仅活跃 Raw 编辑器滚动时更新。
+    /// Raw → Rendered 切换时作为渲染视图的滚动锚点；视口而非插入点是同步来源。
+    var rawVisibleSourceLine: SourceLine = .first
 
     /// 渲染视图当前可见区域顶部的源码行（1-based），Rendered 模式下由 WebView 滚动回调更新。
     /// Rendered → Raw 切换时作为编辑器的滚动锚点。
@@ -326,7 +326,7 @@ final class DocumentViewModel {
         // 消除旧实现中 Rendered→Raw 缺失方向（编辑器只显示自身遗留滚动位置）。
         switch (previousMode, mode) {
         case (.raw, .rendered):
-            requestScroll(to: cursorSourceLine)
+            requestScroll(to: rawVisibleSourceLine)
         case (.rendered, .raw):
             requestScroll(to: renderedVisibleSourceLine)
         default:

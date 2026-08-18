@@ -675,8 +675,8 @@ struct DetailView: View {
                 isActive: documentViewModel.displayMode == .raw,
                 isFindBarVisible: appViewModel.isFindBarVisible,
                 searchRef: textViewSearchRef,
-                onCursorSourceLineChanged: { sourceLine in
-                    documentViewModel.cursorSourceLine = sourceLine
+                onVisibleSourceLineChanged: { sourceLine in
+                    documentViewModel.rawVisibleSourceLine = sourceLine
                 },
                 contentVersion: documentViewModel.contentVersion,
                 undoStore: undoStore
