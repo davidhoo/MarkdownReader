@@ -455,12 +455,26 @@ struct WebViewMarkdownView: View {
         contentReplacementTask?.cancel()
         contentReplacementTask = Task { @MainActor [escapedHTML, generation, page] in
             guard !Task.isCancelled, renderScheduler.accepts(generation) else { return }
-            // 仅当 `MR.replaceContent` 成功返回且世代仍最新时才报告完成。
-            // `try?` 把 JS 抛错转为 nil：nil 则视为失败，不报告——避免过渡完成时
-            // 用户看到旧渲染或空白（固定合同 3）。取消、过期 generation 同样不报告。
-            let result = try? await page.callJavaScript("MR.replaceContent('\(escapedHTML)')")
-            guard result != nil, !Task.isCancelled, renderScheduler.accepts(generation) else { return }
-            onRenderGenerationCompleted?(generation)
+            // 仅当 `MR.replaceContent` 返回显式 true 且世代仍最新时才报告完成。
+            // `WebPage.callJavaScript(_ functionBody:)` 把字符串当作 JS 函数体执行，
+            // 不是表达式——必须用 `return` 才能把 Boolean 回执桥接回 Swift；裸表达式
+            // `MR.replaceContent(...)` 会返回 nil，导致永不完成（这正是修复前的根因）。
+            // `false`（未找到 #mr-content）、`nil`（桥接无值）、非 Boolean 桥接值
+            // 以及过期 generation 都不报告——避免过渡完成时用户看到旧渲染或空白
+            // （固定合同 3）。catch 不打印可见错误、不结束过渡，也不重试或 reload。
+            do {
+                let result = try await page.callJavaScript("return MR.replaceContent('\(escapedHTML)')")
+                guard !Task.isCancelled,
+                      WebViewContentReplacementCompletionPolicy.shouldComplete(
+                          javaScriptResult: result,
+                          isCurrentGeneration: renderScheduler.accepts(generation)
+                      ) else {
+                    return
+                }
+                onRenderGenerationCompleted?(generation)
+            } catch {
+                return
+            }
         }
     }
 

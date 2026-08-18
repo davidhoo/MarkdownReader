@@ -193,4 +193,30 @@ final class WebViewRenderSchedulerTests: XCTestCase {
             change: .displayMode, isRenderedMode: false
         ))
     }
+
+    // MARK: - 内容替换完成判定：显式 Boolean 回执
+
+    func testReplacementCompletionRequiresTrueJavaScriptAcknowledgement() {
+        XCTAssertTrue(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: true, isCurrentGeneration: true
+        ))
+    }
+
+    func testReplacementCompletionRejectsFalseNilAndUnexpectedResult() {
+        XCTAssertFalse(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: false, isCurrentGeneration: true
+        ))
+        XCTAssertFalse(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: nil, isCurrentGeneration: true
+        ))
+        XCTAssertFalse(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: "true", isCurrentGeneration: true
+        ))
+    }
+
+    func testReplacementCompletionRejectsSuccessfulButStaleGeneration() {
+        XCTAssertFalse(WebViewContentReplacementCompletionPolicy.shouldComplete(
+            javaScriptResult: true, isCurrentGeneration: false
+        ))
+    }
 }

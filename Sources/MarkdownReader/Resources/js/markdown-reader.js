@@ -40,18 +40,19 @@
 
     replaceContent(html) {
       const content = document.getElementById('mr-content');
-      if (content) {
-        content.innerHTML = html;
-        MR._searchHighlights = [];
-        MR.renderMermaid();
-        MR.renderPlantUML();
-        MR.renderKaTeX();
-        MR.renderAdmonitions();
-        MR.addCopyButtons();
-        if (typeof Prism !== 'undefined') {
-          Prism.highlightAll();
-        }
+      if (!content) return false;
+
+      content.innerHTML = html;
+      MR._searchHighlights = [];
+      MR.renderMermaid();
+      MR.renderPlantUML();
+      MR.renderKaTeX();
+      MR.renderAdmonitions();
+      MR.addCopyButtons();
+      if (typeof Prism !== 'undefined') {
+        Prism.highlightAll();
       }
+      return true;
     },
 
     getVisibleHeading() {

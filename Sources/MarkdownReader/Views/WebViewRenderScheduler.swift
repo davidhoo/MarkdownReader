@@ -61,6 +61,25 @@ struct WebViewRenderScheduler {
     }
 }
 
+/// 纯完成判定：增量内容替换是否可以向过渡层报告完成。
+///
+/// 与 SwiftUI/WebKit 无关，以便单元测试锁定规则：
+/// 只有 `MR.replaceContent` 返回**显式** `true` 且世代仍为最新请求时才完成。
+/// `false`（目标节点不存在）、`nil`（JS 抛错被 catch 吞掉、裸表达式无 return 导致
+/// `WebPage.callJavaScript` 桥接无值）、非 Boolean（字符串 `"true"`、数字等桥接类型）
+/// 以及过期世代一律不完成——避免在 DOM 未真正替换时结束 Raw 过渡层，让用户看到旧
+/// 渲染或空白 WebView。
+///
+/// 该策略只判定完成，不替代 `WebViewRenderScheduler` 的 latest-wins 世代校验。
+enum WebViewContentReplacementCompletionPolicy {
+    static func shouldComplete(
+        javaScriptResult: Any?,
+        isCurrentGeneration: Bool
+    ) -> Bool {
+        isCurrentGeneration && (javaScriptResult as? Bool == true)
+    }
+}
+
 /// 纯运行时升级策略：依据“已加载运行时需求”与“下一份 HTML 的运行时需求”选择渲染动作。
 ///
 /// 与 SwiftUI/WebKit 无关，以便单元测试锁定规则：
