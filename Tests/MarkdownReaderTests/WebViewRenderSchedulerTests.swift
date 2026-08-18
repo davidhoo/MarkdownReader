@@ -158,4 +158,39 @@ final class WebViewRenderSchedulerTests: XCTestCase {
         XCTAssertFalse(transition.completeIfMatching(generation: 4))
         XCTAssertTrue(transition.completeIfMatching(generation: 5))
     }
+
+    // MARK: - 渲染闸门：Raw 编辑期不触发隐藏 WebView 重渲染
+
+    func testRawContentEditDoesNotRequestWebViewRender() {
+        XCTAssertFalse(WebViewRenderEligibility.shouldRequest(
+            change: .content, isRenderedMode: false
+        ))
+    }
+
+    func testFileAndForcedRefreshStillPrewarmWhileRaw() {
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .fileURL, isRenderedMode: false
+        ))
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .contentVersion, isRenderedMode: false
+        ))
+    }
+
+    func testEnteringRenderedModeRequestsLatestContent() {
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .displayMode, isRenderedMode: true
+        ))
+    }
+
+    func testRenderedContentEditRequestsWebViewRender() {
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .content, isRenderedMode: true
+        ))
+    }
+
+    func testReturningToRawModeDoesNotRequestWebViewRender() {
+        XCTAssertFalse(WebViewRenderEligibility.shouldRequest(
+            change: .displayMode, isRenderedMode: false
+        ))
+    }
 }

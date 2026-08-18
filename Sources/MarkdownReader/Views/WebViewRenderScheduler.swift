@@ -126,3 +126,40 @@ struct RenderedModeTransitionState: Equatable {
         keepsRawVisible = false
     }
 }
+
+/// 文档输入变更的种类，用于渲染闸门判断。
+///
+/// 只区分四个驱动 `requestRender` 的来源：纯内容编辑、文件切换、强制刷新世代、
+/// 显示模式切换。它不携带具体值，仅作 eligibility 判定的标签，保持策略与
+/// SwiftUI/WebKit 无关。
+enum WebViewRenderChange {
+    case content
+    case fileURL
+    case contentVersion
+    case displayMode
+}
+
+/// 纯渲染闸门：决定某类文档输入变更是否应当请求隐藏的常驻 WebView 重渲染。
+///
+/// 与 SwiftUI/WebKit 无关，以便单元测试锁定规则：
+/// - `content`：仅 Rendered 模式请求。Raw 编辑时隐藏 WebView 保持上次已应用快照，
+///   不随每次击键重渲染（固定合同 2）。
+/// - `fileURL`：始终请求，保证新文件进入内容区时隐藏 WebView 在后台预热，
+///   切到 Rendered 时已是最新文件。
+/// - `contentVersion`：始终请求，保留 Reload、外部刷新及同内容强制刷新语义。
+/// - `displayMode`：仅进入 Rendered 时请求最新快照；切回 Raw 不请求（无意义）。
+enum WebViewRenderEligibility {
+    static func shouldRequest(
+        change: WebViewRenderChange,
+        isRenderedMode: Bool
+    ) -> Bool {
+        switch change {
+        case .content:
+            return isRenderedMode
+        case .fileURL, .contentVersion:
+            return true
+        case .displayMode:
+            return isRenderedMode
+        }
+    }
+}
