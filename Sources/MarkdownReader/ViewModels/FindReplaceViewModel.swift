@@ -32,10 +32,11 @@ final class FindReplaceViewModel {
         return matchRanges[currentMatchIndex]
     }
 
-    // 0-based line number for Rendered mode jump
-    var currentMatchLine: Int? {
+    // 当前匹配所在源码行（1-based），供 Rendered 模式跳转。
+    // 内部 SearchResult 仍用 0-based 行号，仅在此边界构造 SourceLine。
+    var currentMatchSourceLine: SourceLine? {
         guard let range = currentMatchRange else { return nil }
-        return searchResult?.lineNumber(for: range.location)
+        return searchResult.map { SourceLine(zeroBasedIndex: $0.lineNumber(for: range.location)) }
     }
 
     // "3/15" or "No results"

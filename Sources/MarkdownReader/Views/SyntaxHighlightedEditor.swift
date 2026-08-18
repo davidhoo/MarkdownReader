@@ -176,6 +176,18 @@ enum EditorScrollGeometry {
     }
 }
 
+
+/// 从 `SourceLine` 计算其在 `NSTextView` 内容中的 UTF-16 字符偏移。
+/// NSRange / NSTextView 以 UTF-16 为单位，因此用 `utf16.count` 而非 `String.count`。
+enum RawSourceLineOffset {
+    static func characterOffset(in content: String, sourceLine: SourceLine) -> Int? {
+        let lines = content.components(separatedBy: "\n")
+        let index = sourceLine.zeroBasedIndex
+        guard lines.indices.contains(index) else { return nil }
+        return lines[..<index].reduce(0) { $0 + $1.utf16.count + 1 }
+    }
+}
+
 /// NSTextView 子类，支持在高亮期间抑制自动滚动
 /// 防止 setSelectedRange / 布局变化触发 scrollRangeToVisible 导致跳动
 class HighlightableTextView: NSTextView {
@@ -256,9 +268,6 @@ class HighlightableTextView: NSTextView {
 
 // MARK: - 语法高亮编辑器
 
-/// 编辑器内容同步策略（任务 4）。
-///
-/// 决定 `updateNSView` 发现 ViewModel 内容与 `NSTextView` 内容不一致时，应采用
 /// ViewModel 内容（覆盖编辑器）还是编辑器内容（回写 ViewModel）。提取为独立纯逻辑，
 /// 使该决策可在无 `NSTextView` 的 headless 环境单独测试。
 ///
@@ -301,7 +310,7 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
     @Binding var content: String
     var fontSize: CGFloat = 13
     var contentPadding: CGFloat = 20
-    var scrollToLine: Int?
+    var scrollToSourceLine: SourceLine?
     var themeColors: ThemeColors
     /// 当前文件 URL，用于 per-file undo 管理
     var fileURL: URL?
@@ -310,8 +319,8 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
     var searchRef: TextViewSearchRef?
     /// 查找面板是否可见，可见时不抢占焦点
     var isFindBarVisible: Bool = false
-    /// 光标行号变化回调（0-based 行号）
-    var onCursorLineNumberChanged: ((Int) -> Void)?
+    /// 光标所在源码行变化回调（1-based SourceLine）
+    var onCursorSourceLineChanged: ((SourceLine) -> Void)?
    /// 内容版本号，变化时强制用 ViewModel 内容覆盖编辑器（阻止 firstResponder 回写）
    /// 用于 reload 操作：ViewModel 更新了 content 但 NSTextView 仍持有旧内容
    var contentVersion: Int = 0
@@ -532,10 +541,10 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             }
         }
 
-        // 滚动到指定行
-        if let line = scrollToLine {
+        // 滚动到指定源码行
+        if let sourceLine = scrollToSourceLine {
             DispatchQueue.main.async {
-                scrollToLineInTextView(textView, line: line, content: textView.string)
+                scrollToLineInTextView(textView, sourceLine: sourceLine, content: textView.string)
             }
         }
     }
@@ -564,13 +573,9 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
 
     // MARK: - 滚动到行
 
-    private func scrollToLineInTextView(_ textView: NSTextView, line: Int, content: String) {
-        let lines = content.components(separatedBy: "\n")
-        guard line < lines.count else { return }
-
-        var charOffset = 0
-        for i in 0..<line {
-            charOffset += lines[i].count + 1
+    private func scrollToLineInTextView(_ textView: NSTextView, sourceLine: SourceLine, content: String) {
+        guard let charOffset = RawSourceLineOffset.characterOffset(in: content, sourceLine: sourceLine) else {
+            return
         }
 
         let range = NSRange(location: charOffset, length: 0)
@@ -671,9 +676,9 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         private func notifyCursorLineNumber(_ textView: NSTextView) {
             let location = textView.selectedRange().location
             let text = textView.string
-            // 1-based line number, consistent with HTML data-line and OutlineItem.lineNumber
+            // 1-based line number, consistent with HTML data-line and SourceLine
             let lineNumber = text[..<text.index(text.startIndex, offsetBy: min(location, text.count))].components(separatedBy: "\n").count
-            parent.onCursorLineNumberChanged?(lineNumber)
+            parent.onCursorSourceLineChanged?(SourceLine(oneBased: lineNumber))
         }
 
         @MainActor

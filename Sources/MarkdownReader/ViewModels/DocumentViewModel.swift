@@ -91,16 +91,17 @@ final class DocumentViewModel {
     /// 当前文档的大纲项
     var outlineItems: [OutlineItem] = []
 
-    /// 大纲导航滚动请求（非 nil 时触发滚动，滚动后应清空）
-    var scrollToLineRequest: Int?
+    /// 跨模式滚动请求（非 nil 时触发目的视图滚动到该源码行，滚动后应清空）。
+    /// Raw 与 Rendered 共用同一 1-based `SourceLine` 锚点，避免单位混淆。
+    var scrollToSourceLineRequest: SourceLine?
 
-    /// 当前光标所在行号（1-based），Raw 模式下由编辑器实时更新
-    /// 与 HTML data-line 属性和 OutlineItem.lineNumber 使用相同约定
-    var cursorLineNumber: Int = 1
+    /// 当前光标所在源码行（1-based），Raw 模式下由编辑器实时更新。
+    /// Raw → Rendered 切换时作为渲染视图的滚动锚点。
+    var cursorSourceLine: SourceLine = .first
 
-    /// 渲染视图当前可见区域顶部的行号（1-based），Rendered 模式下由 WebView 滚动回调实时更新
-    /// 切换回 Raw 模式时用于同步滚动位置
-    var renderedVisibleLineNumber: Int = 1
+    /// 渲染视图当前可见区域顶部的源码行（1-based），Rendered 模式下由 WebView 滚动回调更新。
+    /// Rendered → Raw 切换时作为编辑器的滚动锚点。
+    var renderedVisibleSourceLine: SourceLine = .first
 
     /// Per-file 内容缓存：保存未写入磁盘的编辑内容
     /// 切换文件时保存当前内容，切换回来时恢复缓存内容
@@ -321,21 +322,26 @@ final class DocumentViewModel {
         if let url = currentFileURL {
             displayModeCache[url] = mode
         }
-        // Raw→Rendered：用光标行号同步渲染视图滚动位置
-        // Rendered→Raw：NSTextView 始终存活在 ZStack 中，自然保留滚动位置，无需额外操作
-        if previousMode == .raw && mode == .rendered {
-            requestScrollToLine(cursorLineNumber)
+        // 双向同步源码锚点：Raw↔Rendered 各自选择已记录的 source line，
+        // 消除旧实现中 Rendered→Raw 缺失方向（编辑器只显示自身遗留滚动位置）。
+        switch (previousMode, mode) {
+        case (.raw, .rendered):
+            requestScroll(to: cursorSourceLine)
+        case (.rendered, .raw):
+            requestScroll(to: renderedVisibleSourceLine)
+        default:
+            break
         }
     }
 
-    /// 请求滚动到指定行号（大纲导航使用）
-    func requestScrollToLine(_ lineNumber: Int) {
-        scrollToLineRequest = lineNumber
+    /// 请求滚动到指定源码行（大纲导航、模式切换、查找跳转共用）
+    func requestScroll(to sourceLine: SourceLine) {
+        scrollToSourceLineRequest = sourceLine
     }
 
     /// 清除滚动请求（滚动完成后调用）
     func clearScrollRequest() {
-        scrollToLineRequest = nil
+        scrollToSourceLineRequest = nil
     }
 
     @discardableResult
