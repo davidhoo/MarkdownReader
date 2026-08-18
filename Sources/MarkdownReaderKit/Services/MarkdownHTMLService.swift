@@ -15,13 +15,13 @@ public enum MarkdownHTMLService {
         public let id: String
         public let level: Int
         public let title: String
-        public let lineNumber: Int
+        public let sourceLine: SourceLine?
 
-        public init(id: String, level: Int, title: String, lineNumber: Int) {
+        public init(id: String, level: Int, title: String, sourceLine: SourceLine?) {
             self.id = id
             self.level = level
             self.title = title
-            self.lineNumber = lineNumber
+            self.sourceLine = sourceLine
         }
     }
 
@@ -563,17 +563,25 @@ private struct CustomHTMLFormatter: MarkupWalker {
     mutating func visitHeading(_ heading: Heading) {
         headingCounter += 1
         let id = "heading-\(headingCounter)"
-        let lineNumber = heading.range?.lowerBound.line ?? 0
+        let sourceLine: SourceLine?
+        if let line = heading.range?.lowerBound.line {
+            sourceLine = SourceLine(oneBased: line)
+        } else {
+            sourceLine = nil
+        }
         let title = heading.plainText
 
         headings.append(MarkdownHTMLService.HeadingInfo(
             id: id,
             level: heading.level,
             title: title,
-            lineNumber: lineNumber
+            sourceLine: sourceLine
         ))
 
-        result += "<h\(heading.level) id=\"\(id)\" data-line=\"\(lineNumber)\">"
+        // 仅对有可信源码行的标题输出 data-line；无 range 时不生成虚假第 0 行目标，
+        // 让 JS scrollToLine 落到 closest 兜底分支。
+        let dataLineAttr = sourceLine.map { #" data-line="\#($0.oneBased)""# } ?? ""
+        result += "<h\(heading.level) id=\"\(id)\"\(dataLineAttr)>"
         descendInto(heading)
         result += "</h\(heading.level)>\n"
     }

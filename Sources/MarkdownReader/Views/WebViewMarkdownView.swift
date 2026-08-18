@@ -79,7 +79,7 @@ struct WebViewMarkdownView: View {
     let fileURL: URL?
     var contentPadding: CGFloat = 20
     var maxContentWidthFollowsWindow: Bool = false
-    var scrollToLine: Int?
+    var scrollToSourceLine: SourceLine?
     let themeCSS: String
     var isDark: Bool = true
     /// 内容一键复制总开关：控制阅读页右上角整篇内容复制按钮。运行时切换走
@@ -94,7 +94,7 @@ struct WebViewMarkdownView: View {
     /// 用于 reload 操作等场景，即使 content 值未变也需刷新视图
     var contentVersion: Int = 0
     var onVisibleHeadingChanged: ((MarkdownHTMLService.HeadingInfo?) -> Void)?
-    var onVisibleLineChanged: ((Int) -> Void)?
+    var onVisibleLineChanged: ((SourceLine) -> Void)?
     /// 回归修复：本窗口命令目标（由 WindowSceneHost 注入）。视图直接在其上注册 zoom
     /// handler，不再发布独立 focusedSceneValue 覆盖焦点路由，也不在内部临时 @FocusedValue 反查。
     var commandTarget: WindowCommandTarget?
@@ -124,7 +124,7 @@ struct WebViewMarkdownView: View {
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var scrollSyncTimer: Timer?
     @State private var isConfigured = false
-    @State private var pendingScrollToLine: Int?
+    @State private var pendingScrollToSourceLine: SourceLine?
     @State private var zoomLevel: CGFloat = 1.0
     /// 渲染触发收敛：latest-wins 请求世代。`fileURL`/`content`/`contentVersion`
     /// 任一变化只递增世代；`.task(id:)` 在一次 `Task.yield()` 后对最终快照执行唯一渲染。
@@ -161,7 +161,7 @@ struct WebViewMarkdownView: View {
                 contentVersion: contentVersion,
                 fileURL: fileURL,
                 isRenderedMode: isRenderedMode,
-                scrollToLine: scrollToLine,
+                scrollToLine: scrollToSourceLine,
                 pageIsLoading: page.isLoading,
                 themeCSS: themeCSS,
                 contentPadding: contentPadding,
@@ -215,23 +215,23 @@ struct WebViewMarkdownView: View {
         requestRender()
     }
 
-    /// `scrollToLine` 变化：页面加载中暂存，否则立即滚动。
-    private func handleScrollToLineChange(_ newValue: Int?) {
+    /// `scrollToSourceLine` 变化：页面加载中暂存，否则立即滚动。
+    private func handleScrollToLineChange(_ newValue: SourceLine?) {
         guard let line = newValue else { return }
         if page.isLoading {
-            pendingScrollToLine = line
+            pendingScrollToSourceLine = line
         } else {
             scrollToLineNumber(line)
         }
     }
 
-    /// `page.isLoading` 变化：加载完成后处理待滚动行号、恢复缩放，并补报等待中的完成世代。
+    /// `page.isLoading` 变化：加载完成后处理待滚动源码行、恢复缩放，并补报等待中的完成世代。
     /// loadPage 与 `.none`（页面仍在加载时）分别记录 `pendingLoadCompletionGeneration` 和
     /// `pendingNoneCompletionGeneration`，二者可能属于不同世代；加载结束时各自校验
     /// `renderScheduler.accepts(gen)` 后报告——失效世代被忽略，最新世代补报完成。
     private func handleLoadingChange(_ isLoading: Bool) {
-        if !isLoading, let line = pendingScrollToLine {
-            pendingScrollToLine = nil
+        if !isLoading, let line = pendingScrollToSourceLine {
+            pendingScrollToSourceLine = nil
             scrollToLineNumber(line)
         }
         if !isLoading && zoomLevel != 1.0 {
@@ -423,12 +423,12 @@ struct WebViewMarkdownView: View {
         // 页面加载后同步查找栏显隐（查找栏打开期间渲染按钮隐藏）。
         syncDocumentCopyButtonVisibility()
 
-        if let line = scrollToLine {
-            pendingScrollToLine = line
-            let capturedLine = line
+        if let sourceLine = scrollToSourceLine {
+            pendingScrollToSourceLine = sourceLine
+            let capturedLine = sourceLine
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [capturedLine] in
-                if pendingScrollToLine == capturedLine {
-                    pendingScrollToLine = nil
+                if pendingScrollToSourceLine == capturedLine {
+                    pendingScrollToSourceLine = nil
                     scrollToLineNumber(capturedLine)
                 }
             }
@@ -474,7 +474,8 @@ struct WebViewMarkdownView: View {
         }
     }
 
-    private func scrollToLineNumber(_ lineNumber: Int) {
+    private func scrollToLineNumber(_ sourceLine: SourceLine) {
+        let lineNumber = sourceLine.oneBased
         Task { @MainActor [lineNumber] in
             _ = try? await page.callJavaScript("MR.scrollToLine(\(lineNumber))")
         }
@@ -571,8 +572,9 @@ struct WebViewMarkdownView: View {
         scrollSyncTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
             Task { @MainActor in
                 if let lineResult = try? await page.callJavaScript("MR.getTopVisibleLine()"),
-                   let lineNumber = lineResult as? Int {
-                    onVisibleLineChanged?(lineNumber)
+                   let lineNumber = lineResult as? Int,
+                   lineNumber >= 1 {
+                    onVisibleLineChanged?(SourceLine(oneBased: lineNumber))
                 }
 
                 guard let result = try? await page.callJavaScript("MR.getVisibleHeading()") else {
@@ -587,7 +589,9 @@ struct WebViewMarkdownView: View {
                     onVisibleHeadingChanged?(nil)
                     return
                 }
-                onVisibleHeadingChanged?(MarkdownHTMLService.HeadingInfo(id: id, level: level, title: title, lineNumber: lineNumber))
+                // JS 端无定位标题返回 lineNumber=0；构造 SourceLine 仅对正整数，否则 sourceLine=nil。
+                let sourceLine = lineNumber >= 1 ? SourceLine(oneBased: lineNumber) : nil
+                onVisibleHeadingChanged?(MarkdownHTMLService.HeadingInfo(id: id, level: level, title: title, sourceLine: sourceLine))
             }
         }
     }
@@ -683,7 +687,7 @@ private struct DocumentContentEventsModifier: ViewModifier {
     let contentVersion: Int
     let fileURL: URL?
     let isRenderedMode: Bool
-    let scrollToLine: Int?
+    let scrollToLine: SourceLine?
     let pageIsLoading: Bool
     let themeCSS: String
     let contentPadding: CGFloat
@@ -696,7 +700,7 @@ private struct DocumentContentEventsModifier: ViewModifier {
     /// 按变更种类走渲染闸门：`.content` 仅 Rendered 请求；`.fileURL`/`.contentVersion`/
     /// `.displayScale` 始终请求（预热隐藏 WebView）；`.displayMode` 仅进入 Rendered 请求。
     let onRequestRenderIfNeeded: (WebViewRenderChange) -> Void
-    let onScrollToLineChange: (Int?) -> Void
+    let onScrollToLineChange: (SourceLine?) -> Void
     let onLoadingChange: (Bool) -> Void
     let onUpdateThemeCSS: (String) -> Void
     let onUpdateContentPadding: (CGFloat) -> Void

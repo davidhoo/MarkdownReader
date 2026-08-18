@@ -58,8 +58,8 @@ struct DetailView: View {
     @State private var showUnsupportedFileAlert = false
     @State private var unsupportedFileExt = ""
 
-    /// 渲染模式下当前可见标题的行号（用于大纲高亮同步）
-    @State private var activeOutlineLineNumber: Int?
+    /// 渲染模式下当前可见标题的源码行（用于大纲高亮同步）
+    @State private var activeOutlineLineNumber: SourceLine?
 
     /// PDF 导出失败提示
     @State private var showExportPDFError = false
@@ -493,7 +493,7 @@ struct DetailView: View {
         OutlineView(
             items: documentViewModel.outlineItems,
             onSelect: { item in
-                documentViewModel.requestScrollToLine(item.lineNumber)
+                documentViewModel.requestScroll(to: item.sourceLine)
             },
             activeLineNumber: activeOutlineLineNumber
         )
@@ -538,8 +538,8 @@ struct DetailView: View {
                 textViewSearchRef.clearSearchHighlights()
             }
         } else if findReplaceViewModel.hasResults {
-            if let line = findReplaceViewModel.currentMatchLine {
-                documentViewModel.requestScrollToLine(line)
+            if let sourceLine = findReplaceViewModel.currentMatchSourceLine {
+                documentViewModel.requestScroll(to: sourceLine)
             }
         }
     }
@@ -574,8 +574,8 @@ struct DetailView: View {
                 at: findReplaceViewModel.currentMatchIndex,
                 in: findReplaceViewModel.matchRanges
             )
-        } else if let line = findReplaceViewModel.currentMatchLine {
-            documentViewModel.requestScrollToLine(line)
+        } else if let sourceLine = findReplaceViewModel.currentMatchSourceLine {
+            documentViewModel.requestScroll(to: sourceLine)
         }
     }
 
@@ -622,7 +622,7 @@ struct DetailView: View {
             fileURL: documentViewModel.currentFileURL,
             contentPadding: settings.contentPaddingPoints,
             maxContentWidthFollowsWindow: settings.maxContentWidthFollowsWindow,
-            scrollToLine: documentViewModel.scrollToLineRequest,
+            scrollToSourceLine: documentViewModel.scrollToSourceLineRequest,
             themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
             isDark: settings.resolvedThemeType == .dark,
             documentCopyEnabled: settings.enableDocumentCopy,
@@ -633,10 +633,10 @@ struct DetailView: View {
             isFindBarVisible: appViewModel.isFindBarVisible,
             contentVersion: documentViewModel.contentVersion,
             onVisibleHeadingChanged: { heading in
-                activeOutlineLineNumber = heading?.lineNumber
+                activeOutlineLineNumber = heading?.sourceLine
             },
-           onVisibleLineChanged: { lineNumber in
-               documentViewModel.renderedVisibleLineNumber = lineNumber
+           onVisibleLineChanged: { sourceLine in
+               documentViewModel.renderedVisibleSourceLine = sourceLine
            },
            commandTarget: commandTarget,
            onOpenLinkedMarkdownFile: { [weak session] url in
@@ -670,20 +670,20 @@ struct DetailView: View {
                 ),
                 fontSize: settings.sourceFontPointSize,
                 contentPadding: settings.contentPaddingPoints,
-                scrollToLine: documentViewModel.scrollToLineRequest,
+                scrollToSourceLine: documentViewModel.scrollToSourceLineRequest,
                 fileURL: documentViewModel.currentFileURL,
                 isActive: documentViewModel.displayMode == .raw,
                 isFindBarVisible: appViewModel.isFindBarVisible,
                 searchRef: textViewSearchRef,
-                onCursorLineNumberChanged: { lineNumber in
-                    documentViewModel.cursorLineNumber = lineNumber
+                onCursorSourceLineChanged: { sourceLine in
+                    documentViewModel.cursorSourceLine = sourceLine
                 },
                 contentVersion: documentViewModel.contentVersion,
                 undoStore: undoStore
             )
             .opacity(documentViewModel.displayMode == .raw || renderedTransition.keepsRawVisible ? 1 : 0)
             .allowsHitTesting(documentViewModel.displayMode == .raw)
-            .onChange(of: documentViewModel.scrollToLineRequest) { _, newValue in
+            .onChange(of: documentViewModel.scrollToSourceLineRequest) { _, newValue in
                 if newValue != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         documentViewModel.clearScrollRequest()
@@ -698,7 +698,7 @@ struct DetailView: View {
             // Rendered 且过渡已完成时显示 WebView；过渡期 keepsRawVisible 为 true，Raw 覆盖在上层。
             .opacity(documentViewModel.displayMode == .rendered && !renderedTransition.keepsRawVisible ? 1 : 0)
             .allowsHitTesting(documentViewModel.displayMode == .rendered && !renderedTransition.keepsRawVisible)
-            .onChange(of: documentViewModel.scrollToLineRequest) { _, newValue in
+            .onChange(of: documentViewModel.scrollToSourceLineRequest) { _, newValue in
                 if newValue != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                         documentViewModel.clearScrollRequest()
