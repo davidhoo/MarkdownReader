@@ -77,3 +77,52 @@ enum WebViewRuntimePolicy {
         current == next ? .replaceContent : .loadPage
     }
 }
+
+/// 渲染模式过渡的纯状态机。
+///
+/// 管理 Raw 过渡层在 Raw → Rendered 切换期间是否保持可见。它只回答一个问题：
+/// “现在是否还要挡住 WebView，不让用户看到中间的空白或旧渲染内容”。它不取代
+/// `WebViewRenderScheduler` 的 latest-wins 世代判定——后者决定哪个渲染请求有效，
+/// 这里只决定 Raw 何时可以退场。
+///
+/// 生命周期：
+/// 1. `begin()`：Raw → Rendered 切换的第一步，立即要求 Raw 保持可见，此时还不知道
+///    目标渲染世代。
+/// 2. `track(generation:)`：WebView 真正发起 `requestRender()` 后报告其世代，覆盖
+///    之前的 target；新 track 使任何旧世代的完成回调失效。
+/// 3. `completeIfMatching(generation:)`：只有匹配当前 target 的完成回调才能结束过渡；
+///    不匹配返回 false 且不改状态。
+/// 4. `cancel()`：Rendered → Raw 或 DetailView 消失时清理。
+struct RenderedModeTransitionState: Equatable {
+    private(set) var targetGeneration: UInt?
+    private(set) var keepsRawVisible = false
+
+    /// 开始一次 Raw → Rendered 过渡：Raw 保持可见，等待真实目标世代。
+    mutating func begin() {
+        targetGeneration = nil
+        keepsRawVisible = true
+    }
+
+    /// 记录 WebView 实际请求的渲染世代。新世代覆盖旧 target，使旧世代的完成回调失效。
+    mutating func track(generation: UInt) {
+        guard keepsRawVisible else { return }
+        targetGeneration = generation
+    }
+
+    /// 仅当传入世代匹配当前目标世代时结束过渡；否则保持不变。
+    @discardableResult
+    mutating func completeIfMatching(generation: UInt) -> Bool {
+        guard keepsRawVisible, let target = targetGeneration, generation == target else {
+            return false
+        }
+        targetGeneration = nil
+        keepsRawVisible = false
+        return true
+    }
+
+    /// 取消过渡：Rendered → Raw 或视图消失。
+    mutating func cancel() {
+        targetGeneration = nil
+        keepsRawVisible = false
+    }
+}

@@ -134,4 +134,28 @@ final class WebViewRenderSchedulerTests: XCTestCase {
         let next = MarkdownRuntimeRequirements(requiresMermaid: false, requiresKaTeX: false)
         XCTAssertEqual(WebViewRuntimePolicy.action(current: nil, next: next), .loadPage)
     }
+
+    // MARK: - 渲染模式过渡状态机
+
+    func testRenderedTransitionWaitsForRequestedGeneration() {
+        var transition = RenderedModeTransitionState()
+        transition.begin()
+        transition.track(generation: 8)
+
+        XCTAssertTrue(transition.keepsRawVisible)
+        XCTAssertFalse(transition.completeIfMatching(generation: 7))
+        XCTAssertTrue(transition.keepsRawVisible)
+        XCTAssertTrue(transition.completeIfMatching(generation: 8))
+        XCTAssertFalse(transition.keepsRawVisible)
+    }
+
+    func testNewTransitionInvalidatesOlderCompletion() {
+        var transition = RenderedModeTransitionState()
+        transition.begin()
+        transition.track(generation: 4)
+        transition.track(generation: 5)
+
+        XCTAssertFalse(transition.completeIfMatching(generation: 4))
+        XCTAssertTrue(transition.completeIfMatching(generation: 5))
+    }
 }
