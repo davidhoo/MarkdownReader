@@ -1,4 +1,5 @@
 import SwiftUI
+import MarkdownReaderKit
 
 /// 窗口命令目标（Task 7）。
 ///
@@ -16,6 +17,11 @@ final class WindowCommandTarget {
     var exportPDFHandler: (() -> Void)?
     var findHandler: ((FindCommand) -> Void)?
     var zoomHandler: ((ZoomCommand) -> Void)?
+
+    /// 模式切换回调。需要视图级主动采样上下文（WebView/NSTextView）与 token 保护，
+    /// 故由 `DetailView` 注册的 `handleDisplayModeSwitch` 承担，菜单/快捷键经此进入
+    /// 与分段控件同一切换管线。nil 时回退到直接切换 ViewModel（仍不产生旧行号请求）。
+    var displayModeSwitchHandler: ((DisplayMode) -> Void)?
 
     init(session: WindowSession?) {
         self.session = session
@@ -47,7 +53,14 @@ final class WindowCommandTarget {
         case .toggleCommandPalette:
             session.appViewModel.toggleCommandPalette()
         case .switchDisplayMode(let mode):
-            session.documentViewModel.switchDisplayMode(mode)
+            if let handler = displayModeSwitchHandler {
+                // 视图已注册：进入与分段控件同一切换管线（主动采样 + token + ScrollTransfer）。
+                handler(mode)
+            } else {
+                // 无 handler 回退：直接切换 ViewModel。`switchDisplayMode` 已不再产生
+                // 旧行号请求，故此处不会泄漏 `scrollToSourceLineRequest`。
+                session.documentViewModel.switchDisplayMode(mode)
+            }
         case .zoomIn:
             zoomHandler?(.in)
         case .zoomOut:

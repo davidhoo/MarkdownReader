@@ -113,14 +113,16 @@ enum WebViewRuntimePolicy {
 ///    不匹配返回 false 且不改状态。
 /// 4. `cancel()`：Rendered → Raw 或 DetailView 消失时清理。
 struct RenderedModeTransitionState: Equatable {
-    private(set) var targetGeneration: UInt?
-    private(set) var keepsRawVisible = false
+   private(set) var targetGeneration: UInt?
+   private(set) var keepsRawVisible = false
+   private(set) var transferAcknowledged = false
 
-    /// 开始一次 Raw → Rendered 过渡：Raw 保持可见，等待真实目标世代。
-    mutating func begin() {
-        targetGeneration = nil
-        keepsRawVisible = true
-    }
+   /// 开始一次 Raw → Rendered 过渡：Raw 保持可见，等待真实目标世代。
+   mutating func begin() {
+       targetGeneration = nil
+       keepsRawVisible = true
+       transferAcknowledged = false
+   }
 
     /// 记录 WebView 实际请求的渲染世代。新世代覆盖旧 target，使旧世代的完成回调失效。
     mutating func track(generation: UInt) {
@@ -129,21 +131,36 @@ struct RenderedModeTransitionState: Equatable {
     }
 
     /// 仅当传入世代匹配当前目标世代时结束过渡；否则保持不变。
-    @discardableResult
-    mutating func completeIfMatching(generation: UInt) -> Bool {
-        guard keepsRawVisible, let target = targetGeneration, generation == target else {
-            return false
-        }
-        targetGeneration = nil
-        keepsRawVisible = false
-        return true
-    }
+   @discardableResult
+   mutating func completeIfMatching(generation: UInt) -> Bool {
+       guard keepsRawVisible, let target = targetGeneration, generation == target else {
+           return false
+       }
+       targetGeneration = nil
+       checkAndComplete()
+       return !keepsRawVisible
+   }
+
+   /// 记录 ScrollTransfer 回执。仅当世代已完成且 transfer 已回执时才结束过渡。
+   mutating func acknowledgeTransfer() {
+       guard keepsRawVisible else { return }
+       transferAcknowledged = true
+       checkAndComplete()
+   }
+
+   private mutating func checkAndComplete() {
+       if targetGeneration == nil && transferAcknowledged {
+           keepsRawVisible = false
+           transferAcknowledged = false
+       }
+   }
 
     /// 取消过渡：Rendered → Raw 或视图消失。
-    mutating func cancel() {
-        targetGeneration = nil
-        keepsRawVisible = false
-    }
+   mutating func cancel() {
+       targetGeneration = nil
+       keepsRawVisible = false
+       transferAcknowledged = false
+   }
 }
 
 /// 文档输入变更的种类，用于渲染闸门判断。

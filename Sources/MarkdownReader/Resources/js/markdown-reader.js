@@ -776,6 +776,122 @@
         Prism.highlightAll();
       }
     }
+    ,
+    /// 采集当前视口顶部的源码滚动锚点（小数源码位置 + 全文进度兜底）。
+    /// 仅供单栏模式切换使用，不修改 MR.getTopVisibleLine / MR.scrollToLine。
+    captureSourceScrollAnchor() {
+      var scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+      var blocks = [];
+      var els = document.querySelectorAll('[data-source-start][data-source-end]');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var start = parseInt(el.getAttribute('data-source-start'), 10);
+        var end = parseInt(el.getAttribute('data-source-end'), 10);
+        if (isNaN(start) || isNaN(end) || end < start) continue;
+        var rect = el.getBoundingClientRect();
+        var top = rect.top + scrollTop;
+        var bottom = rect.bottom + scrollTop;
+        var height = bottom - top;
+        if (height <= 0) continue;
+        blocks.push({ start: start, end: end, top: top, bottom: bottom, height: height });
+      }
+      if (blocks.length === 0) {
+        var docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        var progress = docHeight > 0 ? scrollTop / docHeight : 0;
+        return { sourcePosition: 1.0, documentProgress: Math.max(0, Math.min(1, progress)) };
+      }
+      blocks.sort(function (a, b) { return a.top - b.top; });
+      var bestBlock = null;
+      for (var j = 0; j < blocks.length; j++) {
+        if (blocks[j].top <= scrollTop && blocks[j].bottom >= scrollTop) {
+          if (bestBlock === null || blocks[j].height < bestBlock.height) {
+            bestBlock = blocks[j];
+          }
+        }
+      }
+      if (bestBlock) {
+        var progressInBlock = (scrollTop - bestBlock.top) / bestBlock.height;
+        var sourcePosition = bestBlock.start + progressInBlock * (bestBlock.end + 1 - bestBlock.start);
+        var docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        var docProgress = docHeight > 0 ? scrollTop / docHeight : 0;
+        return { sourcePosition: sourcePosition, documentProgress: Math.max(0, Math.min(1, docProgress)) };
+      }
+      if (scrollTop < blocks[0].top) {
+        var docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        var docProgress = docHeight > 0 ? scrollTop / docHeight : 0;
+        return { sourcePosition: blocks[0].start, documentProgress: Math.max(0, Math.min(1, docProgress)) };
+      }
+      var last = blocks[blocks.length - 1];
+      var docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      var docProgress = docHeight > 0 ? scrollTop / docHeight : 0;
+      return { sourcePosition: last.end, documentProgress: Math.max(0, Math.min(1, docProgress)) };
+    }
+    ,
+    /// 根据小数源码位置（或全文进度兜底）滚动到对应位置。
+    /// 仅供单栏模式切换使用，不修改 MR.scrollToLine。
+    /// 在至少一个 requestAnimationFrame 后返回 true，供 Swift 侧当作'已落位'回执。
+    async scrollToSourceScrollAnchor(sourcePosition, documentProgress) {
+      try {
+        var blocks = [];
+        var els = document.querySelectorAll('[data-source-start][data-source-end]');
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          var start = parseInt(el.getAttribute('data-source-start'), 10);
+          var end = parseInt(el.getAttribute('data-source-end'), 10);
+          if (isNaN(start) || isNaN(end) || end < start) continue;
+          var rect = el.getBoundingClientRect();
+          var top = rect.top + window.scrollY;
+          var bottom = rect.bottom + window.scrollY;
+          var height = bottom - top;
+          if (height <= 0) continue;
+          blocks.push({ start: start, end: end, top: top, bottom: bottom, height: height });
+        }
+        var targetY = null;
+        if (blocks.length > 0 && typeof sourcePosition === 'number' && sourcePosition >= 1) {
+          blocks.sort(function (a, b) { return a.top - b.top; });
+          var bestBlock = null;
+          for (var j = 0; j < blocks.length; j++) {
+            if (blocks[j].start <= sourcePosition && blocks[j].end + 1 >= sourcePosition) {
+              if (bestBlock === null || blocks[j].height < bestBlock.height) {
+                bestBlock = blocks[j];
+              }
+            }
+          }
+          if (bestBlock) {
+            var progressInBlock = (sourcePosition - bestBlock.start) / (bestBlock.end + 1 - bestBlock.start);
+            targetY = bestBlock.top + progressInBlock * bestBlock.height;
+          } else {
+            for (var k = 0; k < blocks.length; k++) {
+              if (blocks[k].start > sourcePosition) {
+                if (k > 0) {
+                  var prev = blocks[k - 1];
+                  var ratio = (sourcePosition - (prev.end + 1)) / (blocks[k].start - (prev.end + 1));
+                  targetY = prev.bottom + ratio * (blocks[k].top - prev.bottom);
+                } else {
+                  targetY = blocks[0].top;
+                }
+                break;
+              }
+            }
+            if (targetY === null) {
+              targetY = blocks[blocks.length - 1].bottom;
+            }
+          }
+        }
+        if (targetY === null && typeof documentProgress === 'number') {
+          var docHeight = document.documentElement.scrollHeight - window.innerHeight;
+          targetY = docHeight > 0 ? documentProgress * docHeight : 0;
+        }
+        if (targetY === null) {
+          return false;
+        }
+        window.scrollTo({ top: targetY, behavior: 'auto' });
+        await new Promise(function (resolve) { requestAnimationFrame(resolve); });
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
   };
 
   window.MR = MR;

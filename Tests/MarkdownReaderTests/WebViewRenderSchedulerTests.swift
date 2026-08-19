@@ -137,27 +137,35 @@ final class WebViewRenderSchedulerTests: XCTestCase {
 
     // MARK: - 渲染模式过渡状态机
 
-    func testRenderedTransitionWaitsForRequestedGeneration() {
-        var transition = RenderedModeTransitionState()
-        transition.begin()
-        transition.track(generation: 8)
+   func testRenderedTransitionWaitsForRequestedGeneration() {
+       var transition = RenderedModeTransitionState()
+       transition.begin()
+       transition.track(generation: 8)
 
-        XCTAssertTrue(transition.keepsRawVisible)
-        XCTAssertFalse(transition.completeIfMatching(generation: 7))
-        XCTAssertTrue(transition.keepsRawVisible)
-        XCTAssertTrue(transition.completeIfMatching(generation: 8))
-        XCTAssertFalse(transition.keepsRawVisible)
-    }
+       XCTAssertTrue(transition.keepsRawVisible)
+       XCTAssertFalse(transition.completeIfMatching(generation: 7))
+       XCTAssertTrue(transition.keepsRawVisible)
+       // 世代完成但 transfer 未回执：过渡不结束
+       XCTAssertFalse(transition.completeIfMatching(generation: 8))
+       XCTAssertTrue(transition.keepsRawVisible)
+       // transfer 回执后过渡结束
+       transition.acknowledgeTransfer()
+       XCTAssertFalse(transition.keepsRawVisible)
+   }
 
-    func testNewTransitionInvalidatesOlderCompletion() {
-        var transition = RenderedModeTransitionState()
-        transition.begin()
-        transition.track(generation: 4)
-        transition.track(generation: 5)
+   func testNewTransitionInvalidatesOlderCompletion() {
+       var transition = RenderedModeTransitionState()
+       transition.begin()
+       transition.track(generation: 4)
+       transition.track(generation: 5)
 
-        XCTAssertFalse(transition.completeIfMatching(generation: 4))
-        XCTAssertTrue(transition.completeIfMatching(generation: 5))
-    }
+       XCTAssertFalse(transition.completeIfMatching(generation: 4))
+       // 世代 5 完成但 transfer 未回执：过渡不结束
+       XCTAssertFalse(transition.completeIfMatching(generation: 5))
+       XCTAssertTrue(transition.keepsRawVisible)
+       transition.acknowledgeTransfer()
+       XCTAssertFalse(transition.keepsRawVisible)
+   }
 
     // MARK: - 渲染闸门：Raw 编辑期不触发隐藏 WebView 重渲染
 

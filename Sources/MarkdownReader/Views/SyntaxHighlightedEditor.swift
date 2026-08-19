@@ -232,6 +232,99 @@ enum RawVisibleSourceLine {
     }
 }
 
+/// 模式切换专用的 Raw 源码滚动锚点采样与无光标定位 helper。
+/// 把 NSClipView.bounds 顶部转换为小数源码位置（1-based），不移动光标或选区。
+enum RawSourceScrollAnchor {
+    /// 采样：从 NSScrollView/NSTextView 当前视口顶部计算小数源码位置和全文进度。
+    @MainActor
+    static func capture(
+        scrollView: NSScrollView,
+        textView: NSTextView
+    ) -> SourceScrollAnchor? {
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else { return nil }
+        let content = textView.string
+        guard !content.isEmpty else { return nil }
+
+        let visibleRect = scrollView.contentView.bounds
+        let textContainerOrigin = textView.textContainerOrigin
+        let topPoint = RawVisibleSourceLine.textContainerPoint(
+            visibleOrigin: visibleRect.origin,
+            textContainerOrigin: textContainerOrigin
+        )
+
+        let glyphIndex = layoutManager.glyphIndex(for: topPoint, in: textContainer)
+        guard glyphIndex != NSNotFound,
+              glyphIndex < layoutManager.numberOfGlyphs else { return nil }
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+
+        guard let line = RawVisibleSourceLine.sourceLine(
+            in: content,
+            utf16CharacterOffset: charIndex
+        ) else { return nil }
+
+       let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+       let fragmentTop = lineRect.minY
+       let fragmentHeight = lineRect.height
+       let inFragmentProgress: Double
+        if fragmentHeight > 0 {
+            inFragmentProgress = (topPoint.y - fragmentTop) / fragmentHeight
+        } else {
+            inFragmentProgress = 0
+        }
+        let clampedProgress = min(max(inFragmentProgress, 0), 1)
+        let sourcePosition = Double(line.oneBased) + clampedProgress
+
+        let docHeight = textView.attributedString().size().height
+        let viewportHeight = visibleRect.height
+        let maxScroll = max(docHeight - viewportHeight, 0)
+        let docProgress = maxScroll > 0 ? min(max(visibleRect.origin.y / maxScroll, 0), 1) : 0
+
+        return SourceScrollAnchor(sourcePosition: sourcePosition, documentProgress: docProgress)
+    }
+
+    /// 定位：根据小数源码位置直接设置 clip view bounds origin，不移动光标或选区。
+    @MainActor
+    static func apply(
+        anchor: SourceScrollAnchor,
+        scrollView: NSScrollView,
+        textView: NSTextView
+    ) {
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else { return }
+        let content = textView.string
+        guard !content.isEmpty else { return }
+
+        let sourcePosition = anchor.sourcePosition
+        let lineInt = Int(floor(sourcePosition))
+        let fraction = sourcePosition - Double(lineInt)
+        let clampedLine = max(lineInt, 1)
+
+        guard let charOffset = RawSourceLineOffset.characterOffset(
+            in: content,
+            sourceLine: SourceLine(oneBased: clampedLine)
+        ) else { return }
+
+        let nsContent = content as NSString
+        let clampedOffset = min(charOffset, nsContent.length)
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: clampedOffset)
+        guard glyphIndex != NSNotFound else { return }
+
+        let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+        let targetY = lineRect.minY + fraction * lineRect.height
+
+        let textContainerOrigin = textView.textContainerOrigin
+        let clipOriginY = targetY + textContainerOrigin.y
+
+        let docHeight = textView.attributedString().size().height
+        let viewportHeight = scrollView.contentView.bounds.height
+        let maxScroll = max(docHeight - viewportHeight, 0)
+        let clampedY = min(max(clipOriginY, 0), maxScroll)
+
+        scrollView.contentView.bounds.origin.y = clampedY
+    }
+}
+
 /// NSTextView 子类，支持在高亮期间抑制自动滚动
 /// 防止 setSelectedRange / 布局变化触发 scrollRangeToVisible 导致跳动
 class HighlightableTextView: NSTextView {
@@ -304,11 +397,12 @@ class HighlightableTextView: NSTextView {
         // UndoManager 仍有引用它的 undo 动作，触发 undo 时会访问悬空指针导致 crash
         // 使用异步调度因为 deinit 不能调用 @MainActor 方法
         let store = undoStore
-        DispatchQueue.main.async {
-            store?.removeAllActions()
-        }
-    }
-}
+       DispatchQueue.main.async {
+           store?.removeAllActions()
+         }
+     }
+
+ }
 
 // MARK: - 语法高亮编辑器
 
@@ -366,8 +460,17 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
     /// Raw 编辑器实际可见区域顶部源码行变化回调（1-based SourceLine）。
     /// 仅活跃（isActive）编辑器滚动或程序化跳转后报告；不得调用 requestScroll，
     /// 以免与 Raw → Rendered 锚点回写形成滚动回环。
-    var onVisibleSourceLineChanged: ((SourceLine) -> Void)?
-   /// 内容版本号，变化时强制用 ViewModel 内容覆盖编辑器（阻止 firstResponder 回写）
+   var onVisibleSourceLineChanged: ((SourceLine) -> Void)?
+  /// 模式切换采样：采集 Raw 编辑器当前视口顶部的源码滚动锚点。
+ var onRawScrollAnchorCaptured: ((SourceScrollAnchor) -> Void)?
+ /// 切换触发的采样回调，带触发时 token。nil = 滚动同步（仅缓存），非 nil = 切换触发（需验证 token）。
+ var onRawScrollAnchorTriggered: ((SourceScrollAnchor, UUID) -> Void)?
+   /// 切换主动触发采样的请求 token。变化时立即执行一次 capture。
+   var rawCaptureRequest: UUID?
+  /// 模式切换定位交接：destination == .raw 时消费，应用锚点后回执。
+   var scrollTransfer: ScrollTransfer?
+   var onScrollTransferApplied: ((UUID) -> Void)?
+  /// 内容版本号，变化时强制用 ViewModel 内容覆盖编辑器（阻止 firstResponder 回写）
    /// 用于 reload 操作：ViewModel 更新了 content 但 NSTextView 仍持有旧内容
    var contentVersion: Int = 0
     /// 窗口级 Undo 存储（Task 10）。nil 时回退到 window.undoStore。
@@ -612,15 +715,39 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             }
         }
 
-        // 滚动到指定源码行
-        if let sourceLine = scrollToSourceLine {
-            DispatchQueue.main.async { [context] in
-                self.scrollToLineInTextView(textView, sourceLine: sourceLine, content: textView.string)
-                // 动画结束后报告一次可见行，覆盖 Raw 内大纲/查找跳转后切模式的回归点。
-                context.coordinator.reportVisibleSourceLineOnce()
-            }
-        }
-    }
+       // 滚动到指定源码行
+       if let sourceLine = scrollToSourceLine {
+           DispatchQueue.main.async { [context] in
+               self.scrollToLineInTextView(textView, sourceLine: sourceLine, content: textView.string)
+               // 动画结束后报告一次可见行，覆盖 Raw 内大纲/查找跳转后切模式的回归点。
+               context.coordinator.reportVisibleSourceLineOnce()
+           }
+       }
+
+       // 模式切换定位交接：destination == .raw 时消费
+       if let transfer = scrollTransfer,
+          transfer.destination == .raw,
+          transfer.contentVersion == contentVersion {
+           DispatchQueue.main.async { [transfer] in
+               RawSourceScrollAnchor.apply(
+                   anchor: transfer.anchor,
+                   scrollView: scrollView,
+                   textView: textView
+               )
+              onScrollTransferApplied?(transfer.id)
+          }
+      }
+
+     // 切换主动触发采样：rawCaptureRequest 变化时立即执行 capture。
+     if let requestToken = rawCaptureRequest,
+        requestToken != context.coordinator.lastRawCaptureRequest {
+         context.coordinator.lastRawCaptureRequest = requestToken
+         if let anchor = RawSourceScrollAnchor.capture(scrollView: scrollView, textView: textView) {
+             // 传触发时 token，handleAnchorCaptured 比值防 A→B→A 覆盖
+             onRawScrollAnchorTriggered?(anchor, requestToken)
+         }
+     }
+  }
 
     // MARK: - 颜色转换
 
@@ -690,7 +817,8 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         private var highlightWorkItem: DispatchWorkItem?
         var currentFileURL: URL?
         var previousThemeColors: ThemeColors?
-        var wasActive: Bool = false
+       var wasActive: Bool = false
+       var lastRawCaptureRequest: UUID?
         /// 上次记录的 appearance token，用于检测 appearance 变化
         var lastAppearanceToken: String?
         /// 上次处理的 contentVersion，用于检测程序化内容更新（reload/load）
@@ -815,9 +943,13 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
                 in: content,
                 utf16CharacterOffset: charIndex
             )
-            guard let sourceLine else { return }
-            parent.onVisibleSourceLineChanged?(sourceLine)
-        }
+           guard let sourceLine else { return }
+           parent.onVisibleSourceLineChanged?(sourceLine)
+           // 同时采集模式切换锚点（小数源码位置），供 Raw→Rendered 切换使用。
+           if let anchor = RawSourceScrollAnchor.capture(scrollView: scrollView, textView: textView) {
+               parent.onRawScrollAnchorCaptured?(anchor)
+           }
+       }
 
         @MainActor
         private func reapplyHighlights() {

@@ -491,6 +491,22 @@ private struct CustomHTMLFormatter: MarkupWalker {
         self.inlineImages = inlineImages
     }
 
+    /// 从 `Markup.range` 派生模式切换用的完整源码闭区间属性。
+    ///
+    /// 返回 ` data-source-start="S" data-source-end="E"` 形式串；无可信 range 时返回空串，
+    /// 不制造第 0 行伪锚点。结束行按 cmark range 上界计算：上界位于下一行第 1 列时回退一行
+    /// （range 半开，上界通常指向块尾换行后），且最终不得小于开始行。
+    private func sourceRangeAttributes(_ markup: Markup) -> String {
+        guard let range = markup.range else { return "" }
+        let start = range.lowerBound.line
+        var end = range.upperBound.line
+        if end > start, range.upperBound.column == 1 {
+            end -= 1
+        }
+        if end < start { end = start }
+        return #" data-source-start="\#(start)" data-source-end="\#(end)""#
+    }
+
     /// 将相对路径转换为 mr:// 绝对路径，使其通过 URLSchemeHandler 加载
     private func resolveRelativeURL(_ path: String) -> String {
         guard !path.isEmpty else { return path }
@@ -581,14 +597,14 @@ private struct CustomHTMLFormatter: MarkupWalker {
         // 仅对有可信源码行的标题输出 data-line；无 range 时不生成虚假第 0 行目标，
         // 让 JS scrollToLine 落到 closest 兜底分支。
         let dataLineAttr = sourceLine.map { #" data-line="\#($0.oneBased)""# } ?? ""
-        result += "<h\(heading.level) id=\"\(id)\"\(dataLineAttr)>"
+        result += "<h\(heading.level) id=\"\(id)\"\(dataLineAttr)\(sourceRangeAttributes(heading))>"
         descendInto(heading)
         result += "</h\(heading.level)>\n"
     }
 
     mutating func visitParagraph(_ paragraph: Paragraph) {
         let lineNumber = paragraph.range?.lowerBound.line ?? 0
-        result += "<p data-line=\"\(lineNumber)\">"
+        result += "<p data-line=\"\(lineNumber)\"\(sourceRangeAttributes(paragraph))>"
         descendInto(paragraph)
         result += "</p>\n"
     }
@@ -597,48 +613,48 @@ private struct CustomHTMLFormatter: MarkupWalker {
         let language = codeBlock.language ?? ""
         let languageClass = language.isEmpty ? "" : " class=\"language-\(language.htmlEscaped)\""
         let lineNumber = codeBlock.range?.lowerBound.line ?? 0
-        result += "<pre data-line=\"\(lineNumber)\"><code\(languageClass)>\(codeBlock.code.htmlEscaped)</code></pre>\n"
+        result += "<pre data-line=\"\(lineNumber)\"\(sourceRangeAttributes(codeBlock))><code\(languageClass)>\(codeBlock.code.htmlEscaped)</code></pre>\n"
     }
 
     mutating func visitBlockQuote(_ blockQuote: BlockQuote) {
         let lineNumber = blockQuote.range?.lowerBound.line ?? 0
-        result += "<blockquote data-line=\"\(lineNumber)\">\n"
+        result += "<blockquote data-line=\"\(lineNumber)\"\(sourceRangeAttributes(blockQuote))>\n"
         descendInto(blockQuote)
         result += "</blockquote>\n"
     }
 
     mutating func visitUnorderedList(_ unorderedList: UnorderedList) {
         let lineNumber = unorderedList.range?.lowerBound.line ?? 0
-        result += "<ul data-line=\"\(lineNumber)\">\n"
+        result += "<ul data-line=\"\(lineNumber)\"\(sourceRangeAttributes(unorderedList))>\n"
         descendInto(unorderedList)
         result += "</ul>\n"
     }
 
     mutating func visitOrderedList(_ orderedList: OrderedList) {
         let lineNumber = orderedList.range?.lowerBound.line ?? 0
-        result += "<ol data-line=\"\(lineNumber)\">\n"
+        result += "<ol data-line=\"\(lineNumber)\"\(sourceRangeAttributes(orderedList))>\n"
         descendInto(orderedList)
         result += "</ol>\n"
     }
 
     mutating func visitListItem(_ listItem: ListItem) {
+        let rangeAttrs = sourceRangeAttributes(listItem)
         if let checkbox = listItem.checkbox {
-            result += "<li class=\"task-list-item\">"
+            result += "<li class=\"task-list-item\"\(rangeAttrs)>"
             result += "<input type=\"checkbox\" disabled=\"\""
             if checkbox == .checked {
                 result += " checked=\"\""
             }
             result += " /> "
         } else {
-            result += "<li>"
+            result += "<li\(rangeAttrs)>"
         }
         descendInto(listItem)
         result += "</li>\n"
     }
-
     mutating func visitTable(_ table: Table) {
         let lineNumber = table.range?.lowerBound.line ?? 0
-        result += "<table data-line=\"\(lineNumber)\">\n<thead>\n<tr>\n"
+        result += "<table data-line=\"\(lineNumber)\"\(sourceRangeAttributes(table))>\n<thead>\n<tr>\n"
         for cell in table.head.cells {
             let align = alignmentAttr(table.columnAlignments[cell.indexInParent])
             result += "<th\(align)>"
@@ -666,7 +682,7 @@ private struct CustomHTMLFormatter: MarkupWalker {
 
     mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) {
         let lineNumber = thematicBreak.range?.lowerBound.line ?? 0
-        result += "<hr data-line=\"\(lineNumber)\" />\n"
+        result += "<hr data-line=\"\(lineNumber)\"\(sourceRangeAttributes(thematicBreak)) />\n"
     }
 
     mutating func visitHTMLBlock(_ html: HTMLBlock) {

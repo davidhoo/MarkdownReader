@@ -78,7 +78,17 @@ struct DetailView: View {
     /// Raw→Rendered 过渡状态机：begin 时 Raw 保持可见（挡住 WebView 中间状态），track
     /// 记录真实目标世代，completeIfMatching 在目标渲染完成时让 Raw 退场露出 WebView。
     /// Rendered→Raw 及 DetailView 消失时 cancel。详见 `RenderedModeTransitionState`。
-    @State private var renderedTransition = RenderedModeTransitionState()
+   @State private var renderedTransition = RenderedModeTransitionState()
+   @State private var rawScrollAnchorToTransfer: SourceScrollAnchor?
+   @State private var renderedScrollAnchorToTransfer: SourceScrollAnchor?
+   /// 切换操作主动触发的采样 token。快速 A→B→A 时只接受最后一次。
+   @State private var captureToken: UUID?
+   /// 待切换的目标模式（等 capture 回调后执行）。
+   @State private var pendingModeSwitch: DisplayMode?
+   /// 触发 Raw 主动采样的请求 token。
+   @State private var rawCaptureRequest: UUID?
+   /// 触发 Rendered 主动采样的请求 token。
+   @State private var renderedCaptureRequest: UUID?
 
 
     var body: some View {
@@ -135,6 +145,7 @@ struct DetailView: View {
             commandTarget?.findHandler = nil
             commandTarget?.reloadHandler = nil
             commandTarget?.exportPDFHandler = nil
+            commandTarget?.displayModeSwitchHandler = nil
             // 视图退出：取消复制反馈计时并隐藏对号。
             invalidateCopyFeedback()
         }
@@ -225,15 +236,9 @@ struct DetailView: View {
             if documentViewModel.hasDocument && !documentViewModel.isPlainTextMode {
                 Picker("", selection: Binding(
                     get: { documentViewModel.displayMode },
-                    set: { newValue in
-                        // Raw→Rendered：先 begin() 保持 Raw 可见挡住 WebView 中间状态，
-                        // 再切 mode。WebView 随后经 onRenderRequested 报告真实世代并 track；
-                        // 不由 DetailView 猜世代。Rendered→Raw 由下方 onChange 走 cancel()。
-                        if documentViewModel.displayMode == .raw && newValue == .rendered {
-                            renderedTransition.begin()
-                        }
-                        documentViewModel.switchDisplayMode(newValue)
-                    }
+                   set: { newValue in
+                        handleDisplayModeSwitch(newValue)
+                   }
                 )) {
                     Text(L10n.tr(.displayModeRendered, language: language)).tag(DisplayMode.rendered)
                     Text(L10n.tr(.displayModeRaw, language: language)).tag(DisplayMode.raw)
@@ -622,23 +627,40 @@ struct DetailView: View {
             fileURL: documentViewModel.currentFileURL,
             contentPadding: settings.contentPaddingPoints,
             maxContentWidthFollowsWindow: settings.maxContentWidthFollowsWindow,
-            scrollToSourceLine: documentViewModel.scrollToSourceLineRequest,
-            themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
-            isDark: settings.resolvedThemeType == .dark,
-            documentCopyEnabled: settings.enableDocumentCopy,
-            searchQuery: findReplaceViewModel.searchText,
-            searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
-            searchWholeWord: findReplaceViewModel.isWholeWord,
-            searchCurrentIndex: findReplaceViewModel.currentMatchIndex,
-            isFindBarVisible: appViewModel.isFindBarVisible,
-            contentVersion: documentViewModel.contentVersion,
-            onVisibleHeadingChanged: { heading in
-                activeOutlineLineNumber = heading?.sourceLine
-            },
-           onVisibleLineChanged: { sourceLine in
-               documentViewModel.renderedVisibleSourceLine = sourceLine
+         scrollToSourceLine: documentViewModel.scrollToSourceLineRequest,
+         themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
+       isDark: settings.resolvedThemeType == .dark,
+        documentCopyEnabled: settings.enableDocumentCopy,
+           searchQuery: findReplaceViewModel.searchText,
+           searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
+           searchWholeWord: findReplaceViewModel.isWholeWord,
+           searchCurrentIndex: findReplaceViewModel.currentMatchIndex,
+           isFindBarVisible: appViewModel.isFindBarVisible,
+           contentVersion: documentViewModel.contentVersion,
+           onVisibleHeadingChanged: { heading in
+               activeOutlineLineNumber = heading?.sourceLine
            },
-           commandTarget: commandTarget,
+             onVisibleLineChanged: { sourceLine in
+                 documentViewModel.renderedVisibleSourceLine = sourceLine
+             },
+             scrollTransfer: documentViewModel.scrollTransfer,
+            onScrollTransferApplied: { id in
+                documentViewModel.acknowledgeScrollTransfer(
+                    id: id,
+                    destination: .rendered,
+                    contentVersion: documentViewModel.contentVersion
+                )
+                renderedTransition.acknowledgeTransfer()
+            },
+          captureSourceScrollAnchor: { anchor in
+               renderedScrollAnchorToTransfer = anchor
+           },
+           onRenderedAnchorTriggered: { anchor, token in
+               renderedScrollAnchorToTransfer = anchor
+               handleAnchorCaptured(anchor, token: token, forDestination: .raw)
+           },
+           renderedCaptureRequest: renderedCaptureRequest,
+            commandTarget: commandTarget,
            onOpenLinkedMarkdownFile: { [weak session] url in
                session?.handleLinkedMarkdownFile(url.standardizedFileURL)
            },
@@ -675,36 +697,52 @@ struct DetailView: View {
                 isActive: documentViewModel.displayMode == .raw,
                 isFindBarVisible: appViewModel.isFindBarVisible,
                 searchRef: textViewSearchRef,
-                onVisibleSourceLineChanged: { sourceLine in
-                    documentViewModel.rawVisibleSourceLine = sourceLine
-                },
-                contentVersion: documentViewModel.contentVersion,
+               onVisibleSourceLineChanged: { sourceLine in
+                   documentViewModel.rawVisibleSourceLine = sourceLine
+               },
+            onRawScrollAnchorCaptured: { anchor in
+                rawScrollAnchorToTransfer = anchor
+            },
+            onRawScrollAnchorTriggered: { anchor, token in
+                rawScrollAnchorToTransfer = anchor
+                handleAnchorCaptured(anchor, token: token, forDestination: .rendered)
+            },
+            rawCaptureRequest: rawCaptureRequest,
+             scrollTransfer: documentViewModel.scrollTransfer,
+              onScrollTransferApplied: { id in
+                  documentViewModel.acknowledgeScrollTransfer(
+                      id: id,
+                      destination: .raw,
+                      contentVersion: documentViewModel.contentVersion
+                  )
+              },
+              contentVersion: documentViewModel.contentVersion,
                 undoStore: undoStore
             )
             .opacity(documentViewModel.displayMode == .raw || renderedTransition.keepsRawVisible ? 1 : 0)
-            .allowsHitTesting(documentViewModel.displayMode == .raw)
-            .onChange(of: documentViewModel.scrollToSourceLineRequest) { _, newValue in
-                if newValue != nil {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        documentViewModel.clearScrollRequest()
-                    }
-                }
-            }
+           .allowsHitTesting(documentViewModel.displayMode == .raw)
+          .onChange(of: documentViewModel.scrollToSourceLineRequest) { _, newValue in
+              if newValue != nil {
+                  DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                      documentViewModel.clearScrollRequest()
+                  }
+              }
+          }
 
-            // 渲染模式视图 — 常驻单个 WebView，保留已加载页面和生命周期状态。
+          // 渲染模式视图 — 常驻单个 WebView，保留已加载页面和生命周期状态。
             // 用 opacity 与命中测试控制可见性/交互：Rendered 且过渡完成时显示，
             // 其余时间隐藏在后台预热。opacity 由 displayMode 与过渡状态共同决定。
             renderedMarkdownView
             // Rendered 且过渡已完成时显示 WebView；过渡期 keepsRawVisible 为 true，Raw 覆盖在上层。
             .opacity(documentViewModel.displayMode == .rendered && !renderedTransition.keepsRawVisible ? 1 : 0)
             .allowsHitTesting(documentViewModel.displayMode == .rendered && !renderedTransition.keepsRawVisible)
-            .onChange(of: documentViewModel.scrollToSourceLineRequest) { _, newValue in
-                if newValue != nil {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                        documentViewModel.clearScrollRequest()
-                    }
-                }
-            }
+          .onChange(of: documentViewModel.scrollToSourceLineRequest) { _, newValue in
+              if newValue != nil {
+                  DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                      documentViewModel.clearScrollRequest()
+                  }
+              }
+          }
         }
         .overlay(alignment: .topTrailing) {
             if appViewModel.isFindBarVisible, documentViewModel.hasDocument {
@@ -765,9 +803,44 @@ struct DetailView: View {
         .onChange(of: settings.enableDocumentCopy) { _, _ in invalidateCopyFeedback() }
     }
 
-    /// 把 find/reload/exportPDF handler 注册到注入的本窗口命令目标上。
-    ///
-    /// 回归修复根因 1：DetailView 不再发布独立 `focusedSceneValue(\.windowCommandTarget, …)`
+   /// 把 find/reload/exportPDF handler 注册到注入的本窗口命令目标上。
+   private func handleDisplayModeSwitch(_ newValue: DisplayMode) {
+       let currentMode = documentViewModel.displayMode
+       // 方案 D：displayMode 立即切（UI 不延迟），同时触发主动采样。
+       // 源视图常驻（仅 opacity 变），scroll 位置不变，capture 仍准确。
+       let token = UUID()
+       captureToken = token
+       pendingModeSwitch = newValue
+       if currentMode == .raw && newValue == .rendered {
+           // Raw→Rendered：先 begin 过渡遮罩，立即切 mode，再触发 Raw capture。
+           renderedTransition.begin()
+           documentViewModel.switchDisplayMode(newValue)
+           rawCaptureRequest = token
+       } else if currentMode == .rendered && newValue == .raw {
+           // Rendered→Raw：立即切 mode，触发 Rendered capture。
+           documentViewModel.switchDisplayMode(newValue)
+           renderedCaptureRequest = token
+       } else {
+           documentViewModel.switchDisplayMode(newValue)
+           captureToken = nil
+           pendingModeSwitch = nil
+       }
+   }
+
+  /// capture 回调：验证 token → beginScrollTransfer。
+  /// 快速 A→B→A 时旧回调的 token 不匹配，被丢弃。
+private func handleAnchorCaptured(_ anchor: SourceScrollAnchor, token: UUID, forDestination destination: DisplayMode) {
+   guard let pending = pendingModeSwitch,
+         pending == destination,
+         let currentToken = captureToken,
+         currentToken == token else { return }
+    documentViewModel.beginScrollTransfer(destination: destination, anchor: anchor)
+    captureToken = nil
+    pendingModeSwitch = nil
+}
+
+   ///
+   /// 回归修复根因 1：DetailView 不再发布独立 `focusedSceneValue(\.windowCommandTarget, …)`
     /// 覆盖 `WindowSceneHost` 的 scene 级发布（覆盖会让无 session 的临时 target 抢占
     /// 焦点路由）。handler 直接挂到由 WindowSceneHost 注入、绑定本 session 的 target 上；
     /// 视图重建时 handler 自然更新，session 释放后 target 变 no-op。
@@ -783,5 +856,7 @@ struct DetailView: View {
         }
         target.reloadHandler = { handleReloadButtonTapped() }
         target.exportPDFHandler = { exportPDF() }
+        // 模式切换需视图级主动采样 + token 保护，统一菜单/快捷键与分段控件的切换入口。
+        target.displayModeSwitchHandler = { handleDisplayModeSwitch($0) }
     }
 }

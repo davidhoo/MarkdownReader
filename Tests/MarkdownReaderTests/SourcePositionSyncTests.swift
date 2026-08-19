@@ -62,25 +62,40 @@ final class SourcePositionSyncTests: XCTestCase {
     // MARK: - 模式切换：双向 source anchor
 
     @MainActor
-    func testRawToRenderedRequestsVisibleRawSourceLine() {
+    func testRawToRenderedModeSwitchDoesNotPublishLegacyLineRequest() {
         let viewModel = DocumentViewModel()
         viewModel.displayMode = .raw
         viewModel.rawVisibleSourceLine = SourceLine(oneBased: 18)
 
         viewModel.switchDisplayMode(.rendered)
 
-        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.oneBased, 18)
+        XCTAssertEqual(viewModel.displayMode, .rendered)
+        XCTAssertNil(viewModel.scrollToSourceLineRequest)
     }
 
     @MainActor
-    func testRenderedToRawRequestsVisibleRenderedSourceLine() {
+    func testRenderedToRawModeSwitchCancelsPendingLegacyLineRequest() {
         let viewModel = DocumentViewModel()
         viewModel.displayMode = .rendered
-        viewModel.renderedVisibleSourceLine = SourceLine(oneBased: 21)
+        viewModel.requestScroll(to: SourceLine(oneBased: 1))
 
         viewModel.switchDisplayMode(.raw)
 
-        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.oneBased, 21)
+        XCTAssertEqual(viewModel.displayMode, .raw)
+        XCTAssertNil(viewModel.scrollToSourceLineRequest)
+    }
+
+    /// 显式按行跳转（大纲/查找/标题）不经过模式切换，必须保留传入的 1-based SourceLine，
+    /// 直到既有消费者清除。证明本修复未夺走显式跳转能力。
+    @MainActor
+    func testExplicitRequestScrollRetainsLineUntilCleared() {
+        let viewModel = DocumentViewModel()
+        viewModel.requestScroll(to: SourceLine(oneBased: 42))
+
+        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.oneBased, 42)
+
+        viewModel.clearScrollRequest()
+        XCTAssertNil(viewModel.scrollToSourceLineRequest)
     }
 
     @MainActor
@@ -92,6 +107,190 @@ final class SourcePositionSyncTests: XCTestCase {
         viewModel.switchDisplayMode(.raw)
 
         XCTAssertNil(viewModel.scrollToSourceLineRequest)
+    }
+
+    /// 组合序列回归：旧显式请求存在 → 切 Rendered→Raw 清掉旧请求 →
+    /// `beginScrollTransfer` 仍活着 → 正确 `.raw` 回执后交接清空、请求仍为 nil。
+    /// 守住「交接完成后不会被旧请求 replay 覆盖」这一目标不变式。
+    @MainActor
+    func testRenderedToRawTransferHasNoLegacyRequestToReplayAfterAcknowledgement() {
+        let viewModel = DocumentViewModel()
+        viewModel.displayMode = .rendered
+        viewModel.requestScroll(to: .first)
+
+        viewModel.switchDisplayMode(.raw)
+        let transfer = viewModel.beginScrollTransfer(
+            destination: .raw,
+            anchor: SourceScrollAnchor(sourcePosition: 42.4, documentProgress: 0.58)
+        )
+
+        XCTAssertNil(viewModel.scrollToSourceLineRequest)
+        XCTAssertEqual(viewModel.scrollTransfer?.id, transfer.id)
+
+        viewModel.acknowledgeScrollTransfer(
+            id: transfer.id,
+            destination: .raw,
+            contentVersion: transfer.contentVersion
+        )
+        XCTAssertNil(viewModel.scrollTransfer)
+        XCTAssertNil(viewModel.scrollToSourceLineRequest)
+    }
+
+    // MARK: - SourceScrollAnchor：模式切换的小数源码位置合同
+
+    func testSourceScrollAnchorPreservesFractionalSourcePosition() {
+        let anchor = SourceScrollAnchor(sourcePosition: 18.4, documentProgress: 0.63)
+
+        XCTAssertEqual(anchor.sourcePosition, 18.4, accuracy: 0.0001)
+        XCTAssertEqual(anchor.documentProgress, 0.63, accuracy: 0.0001)
+    }
+
+    func testSourceScrollAnchorClampsDocumentProgressToUnitRange() {
+        // 进度采用钳制策略：超出 0...1 的输入不得崩溃，也不得保留越界值。
+        let above = SourceScrollAnchor(sourcePosition: 5, documentProgress: 1.5)
+        let below = SourceScrollAnchor(sourcePosition: 5, documentProgress: -0.4)
+
+        XCTAssertEqual(above.documentProgress, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(below.documentProgress, 0.0, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testScrollTransferCanOnlyBeAcknowledgedByItsDestinationAndID() {
+        let viewModel = DocumentViewModel()
+        let transfer = viewModel.beginScrollTransfer(
+            destination: .rendered,
+            anchor: SourceScrollAnchor(sourcePosition: 18.4, documentProgress: 0.63)
+        )
+
+        // 目的模式不匹配：不得清除当前请求。
+        viewModel.acknowledgeScrollTransfer(
+            id: transfer.id, destination: .raw, contentVersion: transfer.contentVersion
+        )
+        XCTAssertEqual(viewModel.scrollTransfer?.id, transfer.id)
+
+        // 目的模式匹配且 id、contentVersion 匹配：清除请求。
+        viewModel.acknowledgeScrollTransfer(
+            id: transfer.id, destination: .rendered, contentVersion: transfer.contentVersion
+        )
+        XCTAssertNil(viewModel.scrollTransfer)
+    }
+
+    @MainActor
+    func testScrollTransferWrongIDDoesNotClearCurrentRequest() {
+        let viewModel = DocumentViewModel()
+        let transfer = viewModel.beginScrollTransfer(
+            destination: .rendered,
+            anchor: SourceScrollAnchor(sourcePosition: 18.4, documentProgress: 0.63)
+        )
+
+        // 错误 UUID：不得清除当前请求。
+        viewModel.acknowledgeScrollTransfer(
+            id: UUID(), destination: .rendered, contentVersion: transfer.contentVersion
+        )
+        XCTAssertEqual(viewModel.scrollTransfer?.id, transfer.id)
+    }
+
+    @MainActor
+    func testScrollTransferWrongContentVersionDoesNotClearCurrentRequest() {
+        let viewModel = DocumentViewModel()
+        let transfer = viewModel.beginScrollTransfer(
+            destination: .rendered,
+            anchor: SourceScrollAnchor(sourcePosition: 18.4, documentProgress: 0.63)
+        )
+
+        // 错误 contentVersion（模拟内容版本改变后旧回执）：不得清除当前请求。
+        viewModel.acknowledgeScrollTransfer(
+            id: transfer.id, destination: .rendered, contentVersion: transfer.contentVersion + 1
+        )
+        XCTAssertEqual(viewModel.scrollTransfer?.id, transfer.id)
+
+        // 正确 contentVersion：清除请求。
+        viewModel.acknowledgeScrollTransfer(
+            id: transfer.id, destination: .rendered, contentVersion: transfer.contentVersion
+        )
+        XCTAssertNil(viewModel.scrollTransfer)
+    }
+
+    // MARK: - 渲染块完整源码范围：data-source-start / data-source-end
+
+    /// 多行段落、列表与围栏代码块必须暴露**完整源码闭区间**，而非仅起始行。
+    /// 结束行按 cmark `Markup.range` 的实际上界计算；上界位于下一行第 1 列时回退一行。
+    func testRenderedBlocksExposeInclusiveSourceRanges() {
+        // 行号布局：
+        //  1 # Title
+        //  2 (空)
+        //  3 first paragraph line
+        //  4 second paragraph line
+        //  5 (空)
+        //  6 - first item
+        //  7 - second item
+        //  8 (空)
+        //  9 ```swift
+        // 10 let value = 1
+        // 11 ```
+        let markdown = """
+        # Title
+
+        first paragraph line
+        second paragraph line
+
+        - first item
+        - second item
+
+        ```swift
+        let value = 1
+        ```
+        """
+
+        let html = MarkdownHTMLService.render(markdown).html
+
+        // 多行段落：第 3–4 行（cmark upper 4:22，column>1 不回退）。data-line 保留既有行为。
+        XCTAssertTrue(html.contains(#"<p data-line="3" data-source-start="3" data-source-end="4">"#),
+                      "多行段落须暴露完整闭区间 3...4，实际：\n\(html)")
+        // 围栏代码块：cmark range upper 11:4（含闭合围栏行），column>1 不回退 → end=11。
+        XCTAssertTrue(html.contains(#"<pre data-line="9" data-source-start="9" data-source-end="11">"#),
+                      "围栏代码块须暴露完整闭区间 9...11，实际：\n\(html)")
+        // 列表容器：upper 8:1（下一行第 1 列）回退一行 → end=7。
+        XCTAssertTrue(html.contains(#"<ul data-line="6" data-source-start="6" data-source-end="7">"#),
+                      "无序列表须暴露闭区间 6...7，实际：\n\(html)")
+    }
+
+    /// 单行块同样输出范围（start == end），使半开映射 `[start, end+1)` 有非零跨度。
+    func testSingleLineBlockExposesEqualStartAndEnd() {
+        let html = MarkdownHTMLService.render("# Solo").html
+        XCTAssertTrue(html.contains(#"<h1 id="heading-1" data-line="1" data-source-start="1" data-source-end="1">"#),
+                      "单行标题须暴露 start==end，实际：\n\(html)")
+    }
+
+    /// 无可信 range 的元素不得输出 data-source-start/end，也不得制造第 0 行伪锚点。
+    func testElementWithoutRangeOmitsSourceRangeAttributes() {
+        // 纯 inline HTML block 无 cmark range：不应附带 data-source-* 属性。
+        let html = MarkdownHTMLService.render("<div>raw</div>").html
+        XCTAssertFalse(html.contains("data-source-start=\"0\""),
+                       "无 range 元素不得输出第 0 行伪锚点：\n\(html)")
+    }
+
+    // MARK: - SourceAnchorResolution：模式切换定位策略
+
+    /// 可解析源码位置时优先用精确小数位置，不退回全文进度兜底。
+    func testSourceAnchorUsesExactPositionBeforeDocumentProgressFallback() {
+        let anchor = SourceScrollAnchor(sourcePosition: 18.4, documentProgress: 0.63)
+        XCTAssertEqual(SourceAnchorResolution.mode(for: anchor, canResolveSourcePosition: true), .sourcePosition)
+        XCTAssertEqual(SourceAnchorResolution.mode(for: anchor, canResolveSourcePosition: false), .documentProgress)
+    }
+
+    /// sourcePosition 恰为整数（视口恰停在某行首）仍属可解析，走 .sourcePosition 而非兜底。
+    func testSourceAnchorIntegerPositionStillResolvesAsSourcePosition() {
+        let anchor = SourceScrollAnchor(sourcePosition: 18.0, documentProgress: 0.5)
+        XCTAssertEqual(SourceAnchorResolution.mode(for: anchor, canResolveSourcePosition: true), .sourcePosition)
+    }
+
+    /// documentProgress 为 0 或 1 的边界仍正常映射为 .documentProgress。
+    func testSourceAnchorDocumentProgressBoundariesResolveAsProgress() {
+        let top = SourceScrollAnchor(sourcePosition: 1.0, documentProgress: 0.0)
+        let bottom = SourceScrollAnchor(sourcePosition: 100.0, documentProgress: 1.0)
+        XCTAssertEqual(SourceAnchorResolution.mode(for: top, canResolveSourcePosition: false), .documentProgress)
+        XCTAssertEqual(SourceAnchorResolution.mode(for: bottom, canResolveSourcePosition: false), .documentProgress)
     }
 
     // MARK: - Raw 字符偏移：UTF-16 边界
@@ -266,7 +465,112 @@ final class SourcePositionSyncTests: XCTestCase {
         XCTAssertLessThan(visibleLine.oneBased, 40)
 
         // 光标/选区必须未被移动
+       let cursorAfter = textView.selectedRange()
+       XCTAssertEqual(cursorBefore, cursorAfter)
+   }
+
+    // MARK: - RawSourceScrollAnchor：采样与无光标定位
+
+    /// 60 行文本，视口放在第 20 行中部：采样锚点应位于 20...21 之间。
+    @MainActor
+    func testRawSourceScrollAnchorCaptureReturnsFractionalPosition() throws {
+        _ = NSApplication.shared
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let viewportHeight: CGFloat = 120
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: viewportHeight))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .noBorder
+        let textView = HighlightableTextView(frame: NSRect(x: 0, y: 0, width: 240, height: viewportHeight))
+        textView.font = font
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        guard let textContainer = textView.textContainer else { throw NSError(domain: "test", code: 1) }
+        textContainer.widthTracksTextView = true
+        textContainer.heightTracksTextView = false
+        textContainer.size = NSSize(width: 240, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainerInset = NSSize(width: 20, height: 20)
+        let lines = (1...60).map { "line \($0) for anchor test" }
+        let content = lines.joined(separator: "\n")
+        textView.string = content
+        scrollView.documentView = textView
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: viewportHeight), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = scrollView
+        window.layoutIfNeeded()
+        guard let layoutManager = textView.layoutManager else { throw NSError(domain: "test", code: 2) }
+        layoutManager.ensureLayout(for: textContainer)
+        let midOffset = RawSourceLineOffset.characterOffset(in: content, sourceLine: SourceLine(oneBased: 20)) ?? 0
+        textView.scrollRangeToVisible(NSRange(location: midOffset, length: 0))
+        let anchor = try XCTUnwrap(RawSourceScrollAnchor.capture(scrollView: scrollView, textView: textView))
+        XCTAssertGreaterThan(anchor.sourcePosition, 10.0)
+        XCTAssertLessThan(anchor.sourcePosition, 30.0)
+        XCTAssertGreaterThanOrEqual(anchor.documentProgress, 0)
+        XCTAssertLessThanOrEqual(anchor.documentProgress, 1)
+    }
+
+    /// 用采样锚点应用到同配置编辑器：选区不变。
+    @MainActor
+    func testRawSourceScrollAnchorApplyDoesNotMoveCursor() throws {
+        _ = NSApplication.shared
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let viewportHeight: CGFloat = 120
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: viewportHeight))
+        scrollView.hasVerticalScroller = true
+        let textView = HighlightableTextView(frame: NSRect(x: 0, y: 0, width: 240, height: viewportHeight))
+        textView.font = font
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        guard let textContainer = textView.textContainer else { throw NSError(domain: "test", code: 1) }
+        textContainer.widthTracksTextView = true
+        textContainer.heightTracksTextView = false
+        textContainer.size = NSSize(width: 240, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainerInset = NSSize(width: 20, height: 20)
+        let lines = (1...60).map { "line \($0) for apply test" }
+        let content = lines.joined(separator: "\n")
+        textView.string = content
+        scrollView.documentView = textView
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: viewportHeight), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = scrollView
+        window.layoutIfNeeded()
+        guard let layoutManager = textView.layoutManager else { throw NSError(domain: "test", code: 2) }
+        layoutManager.ensureLayout(for: textContainer)
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        let cursorBefore = textView.selectedRange()
+        let anchor = SourceScrollAnchor(sourcePosition: 30.5, documentProgress: 0.5)
+        RawSourceScrollAnchor.apply(anchor: anchor, scrollView: scrollView, textView: textView)
         let cursorAfter = textView.selectedRange()
         XCTAssertEqual(cursorBefore, cursorAfter)
+    }
+
+    // MARK: - Task 5: 交接生命周期
+
+    @MainActor
+    func testNewModeSwitchInvalidatesOlderUnacknowledgedTransfer() {
+        let viewModel = DocumentViewModel()
+        let first = viewModel.beginScrollTransfer(
+            destination: .rendered,
+            anchor: SourceScrollAnchor(sourcePosition: 18.4, documentProgress: 0.63)
+        )
+        let second = viewModel.beginScrollTransfer(
+            destination: .raw,
+            anchor: SourceScrollAnchor(sourcePosition: 6.2, documentProgress: 0.18)
+        )
+        viewModel.acknowledgeScrollTransfer(id: first.id, destination: .rendered, contentVersion: first.contentVersion)
+        XCTAssertEqual(viewModel.scrollTransfer?.id, second.id)
+    }
+
+    @MainActor
+    func testContentVersionChangePreventsOldAcknowledgement() {
+        let viewModel = DocumentViewModel()
+        let transfer = viewModel.beginScrollTransfer(
+            destination: .rendered,
+            anchor: SourceScrollAnchor(sourcePosition: 10.0, documentProgress: 0.3)
+        )
+        viewModel.contentVersion += 1
+        viewModel.acknowledgeScrollTransfer(id: transfer.id, destination: .rendered, contentVersion: transfer.contentVersion + 1)
+        XCTAssertNotNil(viewModel.scrollTransfer, "旧 contentVersion 回执不得清除当前交接")
+        viewModel.acknowledgeScrollTransfer(id: transfer.id, destination: .rendered, contentVersion: transfer.contentVersion)
+        XCTAssertNil(viewModel.scrollTransfer, "正确 contentVersion 回执应清除当前交接")
     }
 }

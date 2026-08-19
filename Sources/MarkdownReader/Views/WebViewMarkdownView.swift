@@ -93,9 +93,19 @@ struct WebViewMarkdownView: View {
     /// 内容版本号，变化时强制完全重新加载（而非增量更新）
     /// 用于 reload 操作等场景，即使 content 值未变也需刷新视图
     var contentVersion: Int = 0
-    var onVisibleHeadingChanged: ((MarkdownHTMLService.HeadingInfo?) -> Void)?
-    var onVisibleLineChanged: ((SourceLine) -> Void)?
-    /// 回归修复：本窗口命令目标（由 WindowSceneHost 注入）。视图直接在其上注册 zoom
+   var onVisibleHeadingChanged: ((MarkdownHTMLService.HeadingInfo?) -> Void)?
+   var onVisibleLineChanged: ((SourceLine) -> Void)?
+    /// 模式切换位置交接。仅 `destination == .rendered` 且 `contentVersion` 匹配时由本视图消费。
+    var scrollTransfer: ScrollTransfer?
+    /// 交接定位应用后以相同 UUID 回执。
+    var onScrollTransferApplied: ((UUID) -> Void)?
+    /// 采集当前视口顶部的源码滚动锚点（供模式切换采样）。
+  var captureSourceScrollAnchor: (@Sendable (SourceScrollAnchor) -> Void)?
+  /// 切换触发的采样回调，带触发时 token。
+  var onRenderedAnchorTriggered: (@Sendable (SourceScrollAnchor, UUID) -> Void)?
+  /// 切换主动触发采样的请求 token。变化时立即执行一次 JS capture。
+  var renderedCaptureRequest: UUID?
+   /// 回归修复：本窗口命令目标（由 WindowSceneHost 注入）。视图直接在其上注册 zoom
     /// handler，不再发布独立 focusedSceneValue 覆盖焦点路由，也不在内部临时 @FocusedValue 反查。
     var commandTarget: WindowCommandTarget?
 
@@ -124,7 +134,8 @@ struct WebViewMarkdownView: View {
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var scrollSyncTimer: Timer?
     @State private var isConfigured = false
-    @State private var pendingScrollToSourceLine: SourceLine?
+   @State private var pendingScrollToSourceLine: SourceLine?
+    @State private var pendingScrollTransfer: ScrollTransfer?
     @State private var zoomLevel: CGFloat = 1.0
     /// 渲染触发收敛：latest-wins 请求世代。`fileURL`/`content`/`contentVersion`
     /// 任一变化只递增世代；`.task(id:)` 在一次 `Task.yield()` 后对最终快照执行唯一渲染。
@@ -161,19 +172,23 @@ struct WebViewMarkdownView: View {
                 contentVersion: contentVersion,
                 fileURL: fileURL,
                 isRenderedMode: isRenderedMode,
-                scrollToLine: scrollToSourceLine,
-                pageIsLoading: page.isLoading,
-                themeCSS: themeCSS,
-                contentPadding: contentPadding,
-                maxContentWidthFollowsWindow: maxContentWidthFollowsWindow,
-                searchQuery: searchQuery,
-                searchCaseSensitive: searchCaseSensitive,
-                searchWholeWord: searchWholeWord,
-                searchCurrentIndex: searchCurrentIndex,
-                displayScale: displayScale,
-                onRequestRenderIfNeeded: requestRenderIfNeeded,
-                onScrollToLineChange: handleScrollToLineChange,
-                onLoadingChange: handleLoadingChange,
+               scrollToLine: scrollToSourceLine,
+              scrollTransfer: scrollTransfer,
+              renderedCaptureRequest: renderedCaptureRequest,
+              pageIsLoading: page.isLoading,
+               themeCSS: themeCSS,
+               contentPadding: contentPadding,
+               maxContentWidthFollowsWindow: maxContentWidthFollowsWindow,
+               searchQuery: searchQuery,
+               searchCaseSensitive: searchCaseSensitive,
+               searchWholeWord: searchWholeWord,
+               searchCurrentIndex: searchCurrentIndex,
+               displayScale: displayScale,
+              onRequestRenderIfNeeded: requestRenderIfNeeded,
+              onScrollToLineChange: handleScrollToLineChange,
+             onScrollTransferChange: handleScrollTransferChange,
+             onRenderedCaptureRequest: performCaptureSourceScrollAnchor,
+             onLoadingChange: handleLoadingChange,
                 onUpdateThemeCSS: updateThemeCSS,
                 onUpdateContentPadding: updateContentPadding,
                 onUpdateMaxContentWidth: updateMaxContentWidth,
@@ -215,26 +230,83 @@ struct WebViewMarkdownView: View {
         requestRender()
     }
 
-    /// `scrollToSourceLine` 变化：页面加载中暂存，否则立即滚动。
-    private func handleScrollToLineChange(_ newValue: SourceLine?) {
-        guard let line = newValue else { return }
+   /// `scrollToSourceLine` 变化：页面加载中暂存，否则立即滚动。
+   private func handleScrollToLineChange(_ newValue: SourceLine?) {
+       guard let line = newValue else { return }
+       if page.isLoading {
+           pendingScrollToSourceLine = line
+       } else {
+           scrollToLineNumber(line)
+       }
+   }
+
+    /// `scrollTransfer` 变化：仅消费 destination == .rendered 且 contentVersion 匹配的交接。
+    /// 页面加载中暂存，加载结束后验证 id/version 仍一致再执行。
+    private func handleScrollTransferChange(_ newValue: ScrollTransfer?) {
+        guard let transfer = newValue else { return }
+        guard transfer.destination == .rendered else { return }
+        guard transfer.contentVersion == contentVersion else { return }
         if page.isLoading {
-            pendingScrollToSourceLine = line
+            pendingScrollTransfer = transfer
         } else {
-            scrollToLineNumber(line)
+            applyScrollTransfer(transfer)
         }
     }
+
+    /// 调用 JS bridge 定位到锚点位置，成功后以相同 UUID 回执。
+    private func applyScrollTransfer(_ transfer: ScrollTransfer) {
+        let anchor = transfer.anchor
+        let id = transfer.id
+       Task { @MainActor [anchor, id, page] in
+           // callJavaScript 将字符串作为函数体执行，需要显式 return 才能拿到结果。
+           // scrollToSourceScrollAnchor 是 async 函数，需要 await。
+           let js = "return await MR.scrollToSourceScrollAnchor(\(anchor.sourcePosition), \(anchor.documentProgress))"
+          let result = try? await page.callJavaScript(js)
+          let success = result as? Bool ?? false
+           if success {
+                onScrollTransferApplied?(id)
+            }
+        }
+    }
+
+    /// 采集当前视口顶部的源码滚动锚点，通过 completion 回调返回。
+   private func performCaptureSourceScrollAnchor() {
+       let triggerToken = renderedCaptureRequest
+       Task { @MainActor [page, triggerToken] in
+           guard !page.isLoading else { return }
+         // callJavaScript 需要显式 return 才能拿到结果
+         let result = try? await page.callJavaScript("return MR.captureSourceScrollAnchor()")
+          guard let dict = result as? [String: Any] else { return }
+           guard let sourcePosition = dict["sourcePosition"] as? Double,
+                 let documentProgress = dict["documentProgress"] as? Double else { return }
+           guard sourcePosition >= 1 else { return }
+           let anchor = SourceScrollAnchor(
+               sourcePosition: sourcePosition,
+               documentProgress: documentProgress
+           )
+           captureSourceScrollAnchor?(anchor)
+           if let token = triggerToken {
+               onRenderedAnchorTriggered?(anchor, token)
+           }
+       }
+   }
 
     /// `page.isLoading` 变化：加载完成后处理待滚动源码行、恢复缩放，并补报等待中的完成世代。
     /// loadPage 与 `.none`（页面仍在加载时）分别记录 `pendingLoadCompletionGeneration` 和
     /// `pendingNoneCompletionGeneration`，二者可能属于不同世代；加载结束时各自校验
     /// `renderScheduler.accepts(gen)` 后报告——失效世代被忽略，最新世代补报完成。
     private func handleLoadingChange(_ isLoading: Bool) {
-        if !isLoading, let line = pendingScrollToSourceLine {
-            pendingScrollToSourceLine = nil
-            scrollToLineNumber(line)
-        }
-        if !isLoading && zoomLevel != 1.0 {
+       if !isLoading, let line = pendingScrollToSourceLine {
+           pendingScrollToSourceLine = nil
+           scrollToLineNumber(line)
+       }
+       if !isLoading, let transfer = pendingScrollTransfer {
+           pendingScrollTransfer = nil
+           if transfer.contentVersion == contentVersion {
+               applyScrollTransfer(transfer)
+           }
+       }
+       if !isLoading && zoomLevel != 1.0 {
             restoreZoom()
         }
         guard !isLoading else { return }
@@ -603,12 +675,22 @@ struct WebViewMarkdownView: View {
                     onVisibleHeadingChanged?(nil)
                     return
                 }
-                // JS 端无定位标题返回 lineNumber=0；构造 SourceLine 仅对正整数，否则 sourceLine=nil。
-                let sourceLine = lineNumber >= 1 ? SourceLine(oneBased: lineNumber) : nil
-                onVisibleHeadingChanged?(MarkdownHTMLService.HeadingInfo(id: id, level: level, title: title, sourceLine: sourceLine))
-            }
-        }
-    }
+               // JS 端无定位标题返回 lineNumber=0；构造 SourceLine 仅对正整数，否则 sourceLine=nil。
+               let sourceLine = lineNumber >= 1 ? SourceLine(oneBased: lineNumber) : nil
+               onVisibleHeadingChanged?(MarkdownHTMLService.HeadingInfo(id: id, level: level, title: title, sourceLine: sourceLine))
+
+               // 同时采集模式切换锚点，供 Rendered→Raw 切换使用。
+               let anchorResult = try? await page.callJavaScript("return MR.captureSourceScrollAnchor()")
+               if let anchorDict = anchorResult as? [String: Any],
+                  let sourcePosition = anchorDict["sourcePosition"] as? Double,
+                  let documentProgress = anchorDict["documentProgress"] as? Double,
+                  sourcePosition >= 1 {
+                   let anchor = SourceScrollAnchor(sourcePosition: sourcePosition, documentProgress: documentProgress)
+                   captureSourceScrollAnchor?(anchor)
+               }
+           }
+       }
+   }
 
     // MARK: - 缩放
 
@@ -701,8 +783,10 @@ private struct DocumentContentEventsModifier: ViewModifier {
     let contentVersion: Int
     let fileURL: URL?
     let isRenderedMode: Bool
-    let scrollToLine: SourceLine?
-    let pageIsLoading: Bool
+   let scrollToLine: SourceLine?
+  let scrollTransfer: ScrollTransfer?
+  let renderedCaptureRequest: UUID?
+  let pageIsLoading: Bool
     let themeCSS: String
     let contentPadding: CGFloat
     let maxContentWidthFollowsWindow: Bool
@@ -714,8 +798,10 @@ private struct DocumentContentEventsModifier: ViewModifier {
     /// 按变更种类走渲染闸门：`.content` 仅 Rendered 请求；`.fileURL`/`.contentVersion`/
     /// `.displayScale` 始终请求（预热隐藏 WebView）；`.displayMode` 仅进入 Rendered 请求。
     let onRequestRenderIfNeeded: (WebViewRenderChange) -> Void
-    let onScrollToLineChange: (SourceLine?) -> Void
-    let onLoadingChange: (Bool) -> Void
+   let onScrollToLineChange: (SourceLine?) -> Void
+  let onScrollTransferChange: (ScrollTransfer?) -> Void
+  let onRenderedCaptureRequest: () -> Void
+  let onLoadingChange: (Bool) -> Void
     let onUpdateThemeCSS: (String) -> Void
     let onUpdateContentPadding: (CGFloat) -> Void
     let onUpdateMaxContentWidth: (Bool) -> Void
@@ -730,8 +816,10 @@ private struct DocumentContentEventsModifier: ViewModifier {
             .onChange(of: fileURL) { _, _ in onRequestRenderIfNeeded(.fileURL) }
             // isRenderedMode false→true：请求一次最新快照；true→false：闸门否决，不请求。
             .onChange(of: isRenderedMode) { _, _ in onRequestRenderIfNeeded(.displayMode) }
-            .onChange(of: scrollToLine) { _, newValue in onScrollToLineChange(newValue) }
-            .onChange(of: pageIsLoading) { _, isLoading in onLoadingChange(isLoading) }
+           .onChange(of: scrollToLine) { _, newValue in onScrollToLineChange(newValue) }
+         .onChange(of: scrollTransfer) { _, newValue in onScrollTransferChange(newValue) }
+         .onChange(of: renderedCaptureRequest) { _, _ in onRenderedCaptureRequest() }
+          .onChange(of: pageIsLoading) { _, isLoading in onLoadingChange(isLoading) }
             .onChange(of: themeCSS) { _, _ in onUpdateThemeCSS(themeCSS) }
             .onChange(of: contentPadding) { _, newValue in onUpdateContentPadding(newValue) }
             .onChange(of: maxContentWidthFollowsWindow) { _, newValue in onUpdateMaxContentWidth(newValue) }

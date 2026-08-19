@@ -91,17 +91,57 @@ final class DocumentViewModel {
     /// 当前文档的大纲项
     var outlineItems: [OutlineItem] = []
 
-    /// 跨模式滚动请求（非 nil 时触发目的视图滚动到该源码行，滚动后应清空）。
-    /// Raw 与 Rendered 共用同一 1-based `SourceLine` 锚点，避免单位混淆。
+    /// 显式按行跳转请求（非 nil 时触发目的视图滚动到该源码行，滚动后应清空）。
+    /// **仅**服务大纲点击、查找上一个/下一个、标题跳转等显式按行跳转；
+    /// Raw ↔ Rendered 模式切换的位置交接走 `ScrollTransfer`，不发布此请求。
+    /// 统一 1-based `SourceLine`，避免单位混淆。
     var scrollToSourceLineRequest: SourceLine?
 
     /// Raw 编辑器当前可见区域顶部的源码行（1-based），仅活跃 Raw 编辑器滚动时更新。
-    /// Raw → Rendered 切换时作为渲染视图的滚动锚点；视口而非插入点是同步来源。
+    /// 被大纲高亮等既有逻辑读取；模式切换不读取它——位置以主动采样锚点为准。
     var rawVisibleSourceLine: SourceLine = .first
 
     /// 渲染视图当前可见区域顶部的源码行（1-based），Rendered 模式下由 WebView 滚动回调更新。
-    /// Rendered → Raw 切换时作为编辑器的滚动锚点。
+    /// 被大纲高亮等既有逻辑读取；模式切换不读取它——位置以主动采样锚点为准。
     var renderedVisibleSourceLine: SourceLine = .first
+
+    // MARK: - 模式切换位置交接（ScrollTransfer）
+    //
+    // 仅供单栏 Raw ↔ Rendered 模式切换使用，不复用也不替换既有 `scrollToSourceLineRequest`
+    // （后者继续服务大纲/查找/标题跳转）。`ScrollTransfer` 携带目标模式、内容版本和 UUID，
+    // 只有目的视图在三者全部匹配时才能回执清除；隐藏视图不得抢先消费或清除。
+
+    /// 一次性模式切换交接。`beginScrollTransfer` 生成新 UUID 覆盖旧交接；
+    /// 目的视图应用定位后以相同 UUID 回执。
+    var scrollTransfer: ScrollTransfer?
+
+    /// 开启一次模式切换交接，返回带新 UUID 的 transfer。新交接覆盖任何未回执的旧交接。
+    @discardableResult
+    func beginScrollTransfer(
+        destination: DisplayMode,
+        anchor: SourceScrollAnchor
+    ) -> ScrollTransfer {
+        let transfer = ScrollTransfer(
+            id: UUID(),
+            destination: destination,
+            contentVersion: contentVersion,
+            anchor: anchor
+        )
+        scrollTransfer = transfer
+        return transfer
+    }
+
+    /// 目的视图在定位应用后回执。仅当 id、destination、contentVersion 全部匹配当前交接
+    /// 时才清除；过期内容、过期模式或快速 A→B→A 切换产生的旧回执一律丢弃。
+    func acknowledgeScrollTransfer(id: UUID, destination: DisplayMode, contentVersion: Int) {
+        guard let current = scrollTransfer,
+              current.id == id,
+              current.destination == destination,
+              current.contentVersion == contentVersion else {
+            return
+        }
+        scrollTransfer = nil
+    }
 
     /// Per-file 内容缓存：保存未写入磁盘的编辑内容
     /// 切换文件时保存当前内容，切换回来时恢复缓存内容
@@ -313,7 +353,14 @@ final class DocumentViewModel {
         await loadFile(at: node.path)
     }
 
-    /// 切换显示模式
+    /// 切换显示模式。
+    ///
+    /// 模式切换的位置交接**只**走 `SourceScrollAnchor` + `ScrollTransfer`（由
+    /// `DetailView.handleDisplayModeSwitch` 主动采样后 `beginScrollTransfer`）。
+    /// 本方法不再读取 `rawVisibleSourceLine` / `renderedVisibleSourceLine`，
+    /// 也不再发布 `scrollToSourceLineRequest`——后者仅供大纲、查找等显式按行跳转。
+    /// 真实模式发生变化时，取消先前大纲/查找留下、尚未被消费的旧行号请求，
+    /// 防止其在目标视图落位后被异步 replay，覆盖已正确的锚点交接。
     func switchDisplayMode(_ mode: DisplayMode) {
         // 纯文本模式下禁止切换到渲染模式
         if isPlainTextMode && mode == .rendered { return }
@@ -322,24 +369,18 @@ final class DocumentViewModel {
         if let url = currentFileURL {
             displayModeCache[url] = mode
         }
-        // 双向同步源码锚点：Raw↔Rendered 各自选择已记录的 source line，
-        // 消除旧实现中 Rendered→Raw 缺失方向（编辑器只显示自身遗留滚动位置）。
-        switch (previousMode, mode) {
-        case (.raw, .rendered):
-            requestScroll(to: rawVisibleSourceLine)
-        case (.rendered, .raw):
-            requestScroll(to: renderedVisibleSourceLine)
-        default:
-            break
-        }
+        guard previousMode != mode else { return }
+        // 真实模式变化：取消遗留的显式按行跳转请求。模式切换的位置以 ScrollTransfer 为准。
+        clearScrollRequest()
     }
 
-    /// 请求滚动到指定源码行（大纲导航、模式切换、查找跳转共用）
+    /// 请求滚动到指定源码行（大纲导航、查找跳转等显式按行跳转共用）。
+    /// 模式切换**不**调用此方法——其位置交接走 `ScrollTransfer`。
     func requestScroll(to sourceLine: SourceLine) {
         scrollToSourceLineRequest = sourceLine
     }
 
-    /// 清除滚动请求（滚动完成后调用）
+    /// 清除显式按行跳转请求（滚动完成后调用；模式切换时取消遗留请求）。
     func clearScrollRequest() {
         scrollToSourceLineRequest = nil
     }
