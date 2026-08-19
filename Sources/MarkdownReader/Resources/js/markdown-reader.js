@@ -16,26 +16,45 @@
       }
     },
 
-    scrollToLine(lineNumber) {
-      const target = document.querySelector(`[data-line="${lineNumber}"]`);
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        return true;
-      }
-      let closest = null;
-      let minDiff = Infinity;
-      document.querySelectorAll('[data-line]').forEach(el => {
-        const diff = Math.abs(parseInt(el.dataset.line) - lineNumber);
-        if (diff < minDiff) {
-          minDiff = diff;
-          closest = el;
+    /// 定位到指定源码行。placement：
+    /// - 'outlineTop'：大纲点击，目标标题停在视口顶下方 topMarginCSSPixels（统一视觉 12pt）。
+    /// - 'reveal'（默认）：查找等既有跳转，scrollIntoView 居中，忽略 topMarginCSSPixels。
+    /// data-line 找不到时走最近块兜底，仍遵守同一 placement，不抛 TypeError。
+    scrollToLine(lineNumber, placement, topMarginCSSPixels) {
+      var mode = typeof placement === 'string' ? placement : 'reveal';
+      var margin = typeof topMarginCSSPixels === 'number' && topMarginCSSPixels > 0
+        ? topMarginCSSPixels
+        : 0;
+
+      var target = document.querySelector('[data-line="' + lineNumber + '"]');
+      if (!target) {
+        // 最近块兜底：用 for 循环收集最小距离，避免可变 let/const 重新赋值导致的 TypeError。
+        var els = document.querySelectorAll('[data-line]');
+        var best = null;
+        var bestDiff = Infinity;
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          var diff = Math.abs(parseInt(el.getAttribute('data-line'), 10) - lineNumber);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            best = el;
+          }
         }
-      });
-      if (closest) {
-        closest.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target = best;
+      }
+      if (!target) {
+        return false;
+      }
+
+      if (mode === 'outlineTop') {
+        var scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+        var top = target.getBoundingClientRect().top + scrollTop;
+        window.scrollTo({ top: Math.max(0, top - margin), behavior: 'smooth' });
         return true;
       }
-      return false;
+      // reveal：保留既有居中定位。
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return true;
     },
 
     replaceContent(html) {
@@ -820,6 +839,26 @@
         var docHeight = document.documentElement.scrollHeight - window.innerHeight;
         var docProgress = docHeight > 0 ? scrollTop / docHeight : 0;
         return { sourcePosition: blocks[0].start, documentProgress: Math.max(0, Math.min(1, docProgress)) };
+      }
+      // 视口顶部可能落在两个块的 CSS 留白中；大纲顶部对齐（标题距顶 12pt）
+      // 正是这个情形。不能回退到全文最后一个块，否则切换到 Raw 时会把锚点
+      // 错误交接到文末。按相邻视觉块之间的位置，在对应源码间隙中插值。
+      for (var k = 1; k < blocks.length; k++) {
+        var previous = blocks[k - 1];
+        var next = blocks[k];
+        if (scrollTop < next.top) {
+          var visualGap = next.top - previous.bottom;
+          var visualProgress = visualGap > 0
+            ? (scrollTop - previous.bottom) / visualGap
+            : 1;
+          visualProgress = Math.max(0, Math.min(1, visualProgress));
+          var sourceGapStart = previous.end + 1;
+          var sourceGapEnd = Math.max(sourceGapStart, next.start);
+          var sourcePosition = sourceGapStart + visualProgress * (sourceGapEnd - sourceGapStart);
+          var docHeight = document.documentElement.scrollHeight - window.innerHeight;
+          var docProgress = docHeight > 0 ? scrollTop / docHeight : 0;
+          return { sourcePosition: sourcePosition, documentProgress: Math.max(0, Math.min(1, docProgress)) };
+        }
       }
       var last = blocks[blocks.length - 1];
       var docHeight = document.documentElement.scrollHeight - window.innerHeight;

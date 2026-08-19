@@ -91,11 +91,31 @@ final class DocumentViewModel {
     /// 当前文档的大纲项
     var outlineItems: [OutlineItem] = []
 
+    /// 显式按行跳转请求的落点策略：大纲点击与查找等既有跳转共用一个请求通道，
+    /// 但落点语义不同，由 `placement` 区分，不相互污染。
+    ///
+    /// - `reveal`：查找上一个/下一个、标题跳转等既有显式定位，保留 Raw 约 1/3、Rendered 居中。
+    /// - `outlineTop`：大纲点击，将目标标题稳定定位在视口顶部下方约 12pt。
+    ///
+    /// 模式切换的位置交接**不**走此模型——它使用 `ScrollTransfer` + `SourceScrollAnchor`。
+    enum SourceScrollPlacement: Equatable, Sendable {
+        case reveal
+        case outlineTop
+    }
+
+    /// 一次显式按行跳转请求。每次发布都带新 `id`，使连续点击同一标题也能强制目的视图
+    /// 重新触发定位（SwiftUI `onChange` 对值相同但身份不同的请求仍会回调）。
+    struct SourceScrollRequest: Equatable, Sendable {
+        let id: UUID
+        let sourceLine: SourceLine
+        let placement: SourceScrollPlacement
+    }
+
     /// 显式按行跳转请求（非 nil 时触发目的视图滚动到该源码行，滚动后应清空）。
     /// **仅**服务大纲点击、查找上一个/下一个、标题跳转等显式按行跳转；
     /// Raw ↔ Rendered 模式切换的位置交接走 `ScrollTransfer`，不发布此请求。
     /// 统一 1-based `SourceLine`，避免单位混淆。
-    var scrollToSourceLineRequest: SourceLine?
+    var scrollToSourceLineRequest: SourceScrollRequest?
 
     /// Raw 编辑器当前可见区域顶部的源码行（1-based），仅活跃 Raw 编辑器滚动时更新。
     /// 被大纲高亮等既有逻辑读取；模式切换不读取它——位置以主动采样锚点为准。
@@ -374,10 +394,25 @@ final class DocumentViewModel {
         clearScrollRequest()
     }
 
-    /// 请求滚动到指定源码行（大纲导航、查找跳转等显式按行跳转共用）。
+    /// 请求滚动到指定源码行（查找跳转等显式按行跳转共用）。
     /// 模式切换**不**调用此方法——其位置交接走 `ScrollTransfer`。
+    /// 落点策略为 `.reveal`：Raw 约 1/3、Rendered 居中，保留既有查找体验。
     func requestScroll(to sourceLine: SourceLine) {
-        scrollToSourceLineRequest = sourceLine
+        scrollToSourceLineRequest = SourceScrollRequest(
+            id: UUID(),
+            sourceLine: sourceLine,
+            placement: .reveal
+        )
+    }
+
+    /// 请求滚动到大纲选中的源码行，落点策略为 `.outlineTop`：目标标题稳定停在
+    /// 视口顶部下方约 12pt。每次发布都带新 `id`，连续点击同一标题也重新触发定位。
+    func requestOutlineScroll(to sourceLine: SourceLine) {
+        scrollToSourceLineRequest = SourceScrollRequest(
+            id: UUID(),
+            sourceLine: sourceLine,
+            placement: .outlineTop
+        )
     }
 
     /// 清除显式按行跳转请求（滚动完成后调用；模式切换时取消遗留请求）。

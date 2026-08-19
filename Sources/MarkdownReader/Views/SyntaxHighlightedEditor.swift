@@ -137,6 +137,36 @@ extension NSWindow {
 
 /// 编辑器滚动位置纯几何钳制。
 ///
+/// 显式按行跳转的纯几何：把目标源码行的 Y 坐标映射为 `contentView` bounds origin，
+/// 不依赖 AppKit 视图实例，可在 headless 环境单独测试。参数均处于文本视图坐标系
+/// （调用端负责把 `lineFragmentRect` 加上 `textContainerOrigin.y`）。
+enum SourceLineNavigationGeometry {
+    /// 把目标行顶部 Y 映射为 clip view bounds origin，按落点策略决定顶部边距并钳制。
+    ///
+    /// - `.outlineTop`：目标标题距视口顶约 `topMargin`（大纲点击统一 12pt）。
+    /// - `.reveal`：保留既有 Raw 约 1/3 视口位置的查找体验（`targetY - viewportHeight / 3`）。
+    ///
+    /// 文首不允许负 origin；文末在文档可滚动范围内钳制，受系统 bottom inset 容忍。
+    static func origin(
+        targetY: CGFloat,
+        placement: DocumentViewModel.SourceScrollPlacement,
+        topMargin: CGFloat,
+        viewportHeight: CGFloat,
+        documentHeight: CGFloat,
+        bottomInset: CGFloat
+    ) -> CGFloat {
+        let desiredY: CGFloat
+        switch placement {
+        case .outlineTop:
+            desiredY = targetY - topMargin
+        case .reveal:
+            desiredY = targetY - viewportHeight / 3.0
+        }
+        let maxY = max(0, documentHeight - viewportHeight + bottomInset)
+        return max(0, min(desiredY, maxY))
+    }
+}
+
 /// 把高亮恢复后 `contentView` 的目标 origin 钳制提取为无 UI 副作用的纯函数，
 /// 使其在无 `NSTextView` 的 headless 环境可单独测试。参数均处于文本视图坐标系
 /// （调用端负责把 `lineFragmentBounds` 加上 `textContainerOrigin.y`）。
@@ -325,6 +355,57 @@ enum RawSourceScrollAnchor {
     }
 }
 
+/// 把显式按行跳转请求的生命周期判定（能否调度、异步执行前是否仍有效）提取为
+/// 无 UI 副作用的纯逻辑，使其在无 `NSTextView` 的 headless 环境可单独测试。
+///
+/// 解决的竞态：大纲点击发布 `SourceScrollRequest`，`updateNSView` 在每次 SwiftUI
+/// 更新中把闭包排入 `DispatchQueue.main.async`。Rendered 大纲平滑动画会产生多次
+/// 更新，同一请求可能向隐藏 Raw 编辑器排入多个旧闭包；切换 Rendered → Raw 时
+/// `switchDisplayMode` 清空请求，却无法撤回已排队闭包。最后一个旧闭包把编辑器
+/// 拉回大纲标题，造成「先对、后错」。
+///
+/// 该策略把请求 UUID 变成可取消的执行令牌：调度阶段只允许每个 UUID 排入一次；
+/// 执行阶段重新读取当前请求与目的视图活跃状态，验证失败则丢弃闭包、不滚动、
+/// 不报告可见行。模式切换清空请求后，所有已排队旧闭包自动失效。
+///
+/// 不触碰 `ScrollTransfer`、`SourceScrollAnchor`，不保存可变全局状态，也不承载
+/// AppKit 调用。
+enum ExplicitScrollRequestExecutionPolicy {
+    /// 决定本次 SwiftUI 更新是否应为该请求排入滚动闭包。
+    ///
+    /// 同一请求 UUID 在一个视图端最多调度一次：`lastScheduledRequestID` 已等于
+    /// 当前请求 ID 时拒绝重复调度，防止无关更新重复创建滚动动画。连续点击同一
+    /// 标题会生成新 UUID，仍可调度——不得以 `sourceLine` 判定重复。
+    ///
+    /// - Parameters:
+    ///   - requestID: 当前请求的 UUID。
+    ///   - lastScheduledRequestID: 该视图端上次已调度过的请求 UUID（nil 表示尚未调度）。
+    static func shouldSchedule(
+        requestID: UUID,
+        lastScheduledRequestID: UUID?
+    ) -> Bool {
+        requestID != lastScheduledRequestID
+    }
+
+    /// 异步闭包执行前决定是否真正滚动。
+    ///
+    /// 两个边界都必须通过才执行：目的视图当前活跃（隐藏 Raw 不滚动），且当前
+    /// ViewModel 请求仍与闭包捕获的 UUID 相同。请求变 nil（模式切换清空）、
+    /// UUID 改变（被新请求替换）或目的视图不再活跃，都判定为已取消，丢弃闭包。
+    ///
+    /// - Parameters:
+    ///   - capturedRequestID: 闭包捕获的请求 UUID。
+    ///   - currentRequest: 异步执行时刻 ViewModel 当前的请求（可能已被清空或替换）。
+    ///   - isDestinationActive: 目的视图（Raw 编辑器）当前是否为活跃可见模式。
+    static func shouldExecute(
+        capturedRequestID: UUID,
+        currentRequest: DocumentViewModel.SourceScrollRequest?,
+        isDestinationActive: Bool
+    ) -> Bool {
+        isDestinationActive && currentRequest?.id == capturedRequestID
+    }
+}
+
 /// NSTextView 子类，支持在高亮期间抑制自动滚动
 /// 防止 setSelectedRange / 布局变化触发 scrollRangeToVisible 导致跳动
 class HighlightableTextView: NSTextView {
@@ -448,7 +529,7 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
     @Binding var content: String
     var fontSize: CGFloat = 13
     var contentPadding: CGFloat = 20
-    var scrollToSourceLine: SourceLine?
+    var scrollToSourceLineRequest: DocumentViewModel.SourceScrollRequest?
     var themeColors: ThemeColors
     /// 当前文件 URL，用于 per-file undo 管理
     var fileURL: URL?
@@ -715,13 +796,37 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             }
         }
 
-       // 滚动到指定源码行
-       if let sourceLine = scrollToSourceLine {
-           DispatchQueue.main.async { [context] in
-               self.scrollToLineInTextView(textView, sourceLine: sourceLine, content: textView.string)
-               // 动画结束后报告一次可见行，覆盖 Raw 内大纲/查找跳转后切模式的回归点。
-               context.coordinator.reportVisibleSourceLineOnce()
+       // 显式按行跳转请求（大纲/查找/标题）。仅当 Raw 为当前活跃可见模式时消费；
+       // 隐藏 Raw 不得调度或执行，避免在不可见视图执行旧定位。同一请求 UUID 仅调度
+       // 一次（防止 Rendered 大纲平滑动画的多次更新重复排队）；异步闭包执行前再次
+       // 验证请求 ID 仍为 ViewModel 当前请求——模式切换清空请求后，所有已排队旧闭包
+       // 自动失效，不会把编辑器拉回大纲标题（修复「先对、后错」竞态）。
+       if let request = scrollToSourceLineRequest, isActive {
+           if ExplicitScrollRequestExecutionPolicy.shouldSchedule(
+               requestID: request.id,
+               lastScheduledRequestID: context.coordinator.lastScheduledExplicitScrollRequestID
+           ) {
+               context.coordinator.lastScheduledExplicitScrollRequestID = request.id
+               let capturedRequestID = request.id
+               DispatchQueue.main.async { [context, request] in
+                   // 执行前再次读取 coordinator 最新 parent，验证请求 ID 仍匹配且 Raw 仍活跃。
+                   // 验证失败：丢弃闭包，不滚动、不报告可见行。
+                   // SourceScrollRequest 是 let 字段 struct，ID 唯一即整个值相同，
+                   // 故通过 ID 验证后直接用捕获的 request 即可，无需二次解包当前请求。
+                   guard ExplicitScrollRequestExecutionPolicy.shouldExecute(
+                       capturedRequestID: capturedRequestID,
+                       currentRequest: context.coordinator.parent.scrollToSourceLineRequest,
+                       isDestinationActive: context.coordinator.parent.isActive
+                   ) else { return }
+                   self.scrollToLineInTextView(textView, request: request, content: textView.string)
+                   // 动画结束后报告一次可见行，覆盖 Raw 内大纲/查找跳转后切模式的回归点。
+                   context.coordinator.reportVisibleSourceLineOnce()
+               }
            }
+       } else if scrollToSourceLineRequest == nil {
+           // 当前请求为 nil（模式切换清空）：重置调度记录，使下一次新 UUID 请求可正常处理。
+           // 不得以 sourceLine 判定重复，连续点击同一标题必须仍可执行。
+           context.coordinator.lastScheduledExplicitScrollRequestID = nil
        }
 
        // 模式切换定位交接：destination == .raw 时消费
@@ -773,38 +878,56 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
 
     // MARK: - 滚动到行
 
-    private func scrollToLineInTextView(_ textView: NSTextView, sourceLine: SourceLine, content: String) {
-        guard let charOffset = RawSourceLineOffset.characterOffset(in: content, sourceLine: sourceLine) else {
+    /// 显式按行跳转：根据落点策略定位目标行，统一动画 0.3 秒、`easeOut`。
+    /// 大纲点击（`.outlineTop`）把目标行停到视口顶下方约 12pt；查找等（`.reveal`）
+    /// 保留既有约 1/3 视口位置。不移动光标/选区，先 `scrollRangeToVisible` 做布局准备，
+    /// 再立即以 `SourceLineNavigationGeometry` 计算的 origin 覆盖。
+    private func scrollToLineInTextView(
+        _ textView: NSTextView,
+        request: DocumentViewModel.SourceScrollRequest,
+        content: String
+    ) {
+        guard let charOffset = RawSourceLineOffset.characterOffset(
+            in: content,
+            sourceLine: request.sourceLine
+        ) else {
             return
         }
 
         let range = NSRange(location: charOffset, length: 0)
         textView.scrollRangeToVisible(range)
 
-        // 1/3 位置效果
-        if let scrollView = textView.enclosingScrollView,
-           let layoutManager = textView.layoutManager,
-           let textContainer = textView.textContainer {
+        guard let scrollView = textView.enclosingScrollView,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else {
+            return
+        }
 
-            let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-            let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-            let textContainerOrigin = textView.textContainerOrigin
-            let targetY = rect.origin.y + textContainerOrigin.y
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        let textContainerOrigin = textView.textContainerOrigin
+        let targetY = rect.origin.y + textContainerOrigin.y
 
-            let visibleHeight = scrollView.contentView.bounds.height
-            let adjustedY = max(0, targetY - visibleHeight / 3.0)
+        let visibleHeight = scrollView.contentView.bounds.height
+        let documentHeight = scrollView.documentView?.frame.height ?? 0
+        // 系统管理的 contentInsets 提供少量额外可滚动空间，钳制上限读取容忍
+        let bottomInset = scrollView.contentView.contentInsets.bottom
 
-            let documentHeight = scrollView.documentView?.frame.height ?? 0
-            // 系统管理的 contentInsets 提供少量额外可滚动空间，钳制上限读取容忍
-            let clampedY = min(adjustedY, documentHeight - visibleHeight + scrollView.contentView.contentInsets.bottom)
+        let clampedY = SourceLineNavigationGeometry.origin(
+            targetY: targetY,
+            placement: request.placement,
+            topMargin: 12,
+            viewportHeight: visibleHeight,
+            documentHeight: documentHeight,
+            bottomInset: bottomInset
+        )
 
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.3
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                scrollView.contentView.animator().setBoundsOrigin(
-                    NSPoint(x: scrollView.contentView.bounds.origin.x, y: clampedY)
-                )
-            }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.3
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            scrollView.contentView.animator().setBoundsOrigin(
+                NSPoint(x: scrollView.contentView.bounds.origin.x, y: clampedY)
+            )
         }
     }
 
@@ -819,6 +942,11 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         var previousThemeColors: ThemeColors?
        var wasActive: Bool = false
        var lastRawCaptureRequest: UUID?
+        /// 已为显式按行跳转请求（大纲/查找）调度过滚动闭包的 UUID。
+        /// 同一 UUID 仅调度一次，防止 Rendered 大纲平滑动画的多次 SwiftUI 更新
+        /// 向隐藏 Raw 编辑器排入重复闭包；请求清空时置 nil，使下一个新 UUID 可正常处理。
+        /// 不得以 `sourceLine` 判定重复——连续点击同一标题会带新 UUID，必须仍能调度。
+        var lastScheduledExplicitScrollRequestID: UUID?
         /// 上次记录的 appearance token，用于检测 appearance 变化
         var lastAppearanceToken: String?
         /// 上次处理的 contentVersion，用于检测程序化内容更新（reload/load）

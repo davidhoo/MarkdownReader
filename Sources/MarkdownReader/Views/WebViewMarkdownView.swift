@@ -79,7 +79,7 @@ struct WebViewMarkdownView: View {
     let fileURL: URL?
     var contentPadding: CGFloat = 20
     var maxContentWidthFollowsWindow: Bool = false
-    var scrollToSourceLine: SourceLine?
+    var scrollToSourceLineRequest: DocumentViewModel.SourceScrollRequest?
     let themeCSS: String
     var isDark: Bool = true
     /// 内容一键复制总开关：控制阅读页右上角整篇内容复制按钮。运行时切换走
@@ -115,7 +115,16 @@ struct WebViewMarkdownView: View {
 
     /// 当前是否处于渲染模式。控制渲染闸门：仅 Rendered 时纯 content 变更才请求渲染，
     /// 进入 Rendered 时请求一次最新快照；切回 Raw 不请求。
-    var isRenderedMode: Bool = false
+    var isRenderedMode: Bool = false {
+        didSet {
+            // 离开 Rendered 模式时，立即清除与当前模式不兼容的 pending 显式请求，
+            // 不得在隐藏 WebView 执行延迟旧定位。进入 Rendered 时若残留旧 pending
+            // （理论上已被清空）也一并清除，确保定位只服从当前可见模式。
+            if !isRenderedMode {
+                pendingScrollToSourceLine = nil
+            }
+        }
+    }
     /// 实际 `requestRender()` 发起时同步报告该请求所属世代。DetailView 用它调用
     /// `RenderedModeTransitionState.track(generation:)`，使 Raw→Rendered 过渡等待真实目标。
     var onRenderRequested: ((UInt) -> Void)?
@@ -134,7 +143,7 @@ struct WebViewMarkdownView: View {
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var scrollSyncTimer: Timer?
     @State private var isConfigured = false
-   @State private var pendingScrollToSourceLine: SourceLine?
+   @State private var pendingScrollToSourceLine: DocumentViewModel.SourceScrollRequest?
     @State private var pendingScrollTransfer: ScrollTransfer?
     @State private var zoomLevel: CGFloat = 1.0
     /// 渲染触发收敛：latest-wins 请求世代。`fileURL`/`content`/`contentVersion`
@@ -172,7 +181,7 @@ struct WebViewMarkdownView: View {
                 contentVersion: contentVersion,
                 fileURL: fileURL,
                 isRenderedMode: isRenderedMode,
-               scrollToLine: scrollToSourceLine,
+               scrollToLine: scrollToSourceLineRequest,
               scrollTransfer: scrollTransfer,
               renderedCaptureRequest: renderedCaptureRequest,
               pageIsLoading: page.isLoading,
@@ -230,13 +239,23 @@ struct WebViewMarkdownView: View {
         requestRender()
     }
 
-   /// `scrollToSourceLine` 变化：页面加载中暂存，否则立即滚动。
-   private func handleScrollToLineChange(_ newValue: SourceLine?) {
-       guard let line = newValue else { return }
+   /// `scrollToSourceLineRequest` 变化：页面加载中暂存，否则立即滚动。
+   /// 仅在 Rendered 模式消费；离开 Rendered 模式或请求被清空时，清除暂存 pending，
+   /// 不在隐藏 WebView 执行旧定位。
+   private func handleScrollToLineChange(_ newValue: DocumentViewModel.SourceScrollRequest?) {
+       guard let request = newValue else {
+           // 请求被清空（模式切换等）：丢弃已暂存的 pending，使已排队旧动作失效。
+           pendingScrollToSourceLine = nil
+           return
+       }
+       guard isRenderedMode else {
+           // 非 Rendered 模式：隐藏 WebView 不得新建 pending 或执行 JavaScript。
+           return
+       }
        if page.isLoading {
-           pendingScrollToSourceLine = line
+           pendingScrollToSourceLine = request
        } else {
-           scrollToLineNumber(line)
+           scrollToLineRequest(request)
        }
    }
 
@@ -296,9 +315,18 @@ struct WebViewMarkdownView: View {
     /// `pendingNoneCompletionGeneration`，二者可能属于不同世代；加载结束时各自校验
     /// `renderScheduler.accepts(gen)` 后报告——失效世代被忽略，最新世代补报完成。
     private func handleLoadingChange(_ isLoading: Bool) {
-       if !isLoading, let line = pendingScrollToSourceLine {
+       if !isLoading, let request = pendingScrollToSourceLine {
            pendingScrollToSourceLine = nil
-           scrollToLineNumber(line)
+           // 加载结束消费 pending 前验证：pending ID 仍是当前请求、当前为 Rendered
+           // 模式。请求被清空/替换或已离开 Rendered 时丢弃 pending，不执行旧定位。
+           if RenderedExplicitScrollRequestPolicy.shouldApplyPending(
+               pendingRequest: request,
+               currentRequest: scrollToSourceLineRequest,
+               isRenderedMode: isRenderedMode,
+               isLoading: false
+           ) {
+               scrollToLineRequest(request)
+           }
        }
        if !isLoading, let transfer = pendingScrollTransfer {
            pendingScrollTransfer = nil
@@ -495,14 +523,21 @@ struct WebViewMarkdownView: View {
         // 页面加载后同步查找栏显隐（查找栏打开期间渲染按钮隐藏）。
         syncDocumentCopyButtonVisibility()
 
-        if let sourceLine = scrollToSourceLine {
-            pendingScrollToSourceLine = sourceLine
-            let capturedLine = sourceLine
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [capturedLine] in
-                if pendingScrollToSourceLine == capturedLine {
-                    pendingScrollToSourceLine = nil
-                    scrollToLineNumber(capturedLine)
-                }
+        if let request = scrollToSourceLineRequest, isRenderedMode {
+            pendingScrollToSourceLine = request
+            let capturedRequest = request
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [capturedRequest] in
+                guard pendingScrollToSourceLine == capturedRequest else { return }
+                pendingScrollToSourceLine = nil
+                // 0.8 秒兜底清理只能清除相同 UUID 的 pending，不得恢复或执行已取消的请求：
+                // 再次校验该 pending ID 仍是当前请求、当前为 Rendered 模式、页面不在加载中。
+                guard RenderedExplicitScrollRequestPolicy.shouldApplyPending(
+                    pendingRequest: capturedRequest,
+                    currentRequest: scrollToSourceLineRequest,
+                    isRenderedMode: isRenderedMode,
+                    isLoading: page.isLoading
+                ) else { return }
+                scrollToLineRequest(capturedRequest)
             }
         }
     }
@@ -560,10 +595,16 @@ struct WebViewMarkdownView: View {
         }
     }
 
-    private func scrollToLineNumber(_ sourceLine: SourceLine) {
-        let lineNumber = sourceLine.oneBased
-        Task { @MainActor [lineNumber] in
-            _ = try? await page.callJavaScript("MR.scrollToLine(\(lineNumber))")
+    private func scrollToLineRequest(_ request: DocumentViewModel.SourceScrollRequest) {
+        // 入口防御性验证：仅 Rendered 模式且请求仍是当前请求时执行 JavaScript。
+        // 隐藏 WebView 或已被替换/清空的请求不得执行旧定位，避免覆盖模式切换锚点。
+        guard isRenderedMode,
+              let current = scrollToSourceLineRequest,
+              current.id == request.id else { return }
+        let arguments = RenderedLineNavigationBridge.arguments(for: request, zoomLevel: zoomLevel)
+        let js = "MR.scrollToLine(\(arguments.lineNumber), \(arguments.placementLiteral), \(arguments.topMarginCSSPixels))"
+        Task { @MainActor [js] in
+            _ = try? await page.callJavaScript(js)
         }
     }
 
@@ -723,6 +764,90 @@ private extension String {
     }
 }
 
+/// 渲染视图显式按行跳转请求（大纲/查找）的 pending 生命周期判定，提取为无 UI
+/// 副作用的纯逻辑，使其在无 WebPage 的 headless 环境可单独测试。
+///
+/// 解决的竞态：页面加载中会把请求保存到 `pendingScrollToSourceLine`，加载结束后
+/// 在隐藏 Rendered 视图执行旧定位，覆盖模式切换后的锚点位置。该策略把 pending
+/// 请求 UUID 变成可取消的执行令牌：执行前验证 pending ID 仍是 ViewModel 当前请求、
+/// 当前为 Rendered 模式、页面不在加载中。请求清空、离开 Rendered 模式或被新请求
+/// 替换时，pending 一律丢弃，不执行 JavaScript。
+///
+/// 与 `ExplicitScrollRequestExecutionPolicy`（Raw 端）对称，但额外校验页面加载状态：
+/// Rendered 端的执行前提是页面已就绪，加载中须由调用方暂存待加载结束再次校验。
+enum RenderedExplicitScrollRequestPolicy {
+    /// 决定页面加载结束（或立即执行路径）时是否真正消费 pending 请求。
+    ///
+    /// 三个边界都必须通过：pending ID 仍是当前请求（未被清空或替换）、当前为
+    /// Rendered 模式（隐藏 WebView 不执行）、页面不在加载中。任一不满足则丢弃
+    /// pending，不执行 JavaScript。
+    ///
+    /// - Parameters:
+    ///   - pendingRequest: 暂存的请求（含 UUID）。
+    ///   - currentRequest: 当前 ViewModel 请求（可能已被清空或替换）。
+    ///   - isRenderedMode: 当前是否为渲染模式。
+    ///   - isLoading: 页面是否仍在加载。
+    static func shouldApplyPending(
+        pendingRequest: DocumentViewModel.SourceScrollRequest,
+        currentRequest: DocumentViewModel.SourceScrollRequest?,
+        isRenderedMode: Bool,
+        isLoading: Bool
+    ) -> Bool {
+        !isLoading
+            && isRenderedMode
+            && currentRequest?.id == pendingRequest.id
+    }
+}
+
+/// 渲染视图按行跳转的 JavaScript 参数构造（纯函数，可在 headless 环境单独测试）。
+///
+/// 大纲点击（`.outlineTop`）的 12pt 视觉边距直接以常量 12 传入：CSS `zoom` 已缩放布局，
+/// `getBoundingClientRect()` 与 `window.scrollY`/`scrollTo` 同处缩放后坐标系，12pt 视觉
+/// 边距即对应 12 个缩放后 CSS 像素，不随 `zoomLevel` 变化。
+/// `.reveal`（查找）不携带顶部边距，继续走 `scrollIntoView` 居中策略。
+enum RenderedLineNavigationBridge {
+    /// 桥接参数：目标行号、落点策略字面量、顶部边距 CSS 像素。
+    struct Arguments: Equatable {
+        let lineNumber: Int
+        let placement: DocumentViewModel.SourceScrollPlacement
+        let topMarginCSSPixels: CGFloat
+    }
+
+    static func arguments(
+        for request: DocumentViewModel.SourceScrollRequest,
+        zoomLevel: CGFloat
+    ) -> Arguments {
+        let topMargin: CGFloat
+        switch request.placement {
+        case .outlineTop:
+            // CSS `zoom` 会缩放布局，`getBoundingClientRect()` 与 `window.scrollY`/`scrollTo`
+            // 均在缩放后的同一坐标系工作。因此 12pt 视觉边距对应 12 个缩放后 CSS 像素，
+            // 直接传 12 即可，不随 zoomLevel 缩放。
+            _ = zoomLevel
+            topMargin = 12
+        case .reveal:
+            topMargin = 0
+        }
+        return Arguments(
+            lineNumber: request.sourceLine.oneBased,
+            placement: request.placement,
+            topMarginCSSPixels: topMargin
+        )
+    }
+}
+
+private extension RenderedLineNavigationBridge.Arguments {
+    /// 传给 `MR.scrollToLine` 的 placement 字面量（与 JS 端枚举字符串一致）。
+    var placementLiteral: String {
+        switch placement {
+        case .outlineTop:
+            return "'outlineTop'"
+        case .reveal:
+            return "'reveal'"
+        }
+    }
+}
+
 /// 承载 WebView 生命周期末尾的几个 modifier（onDisappear / 命令目标变化 /
 /// 渲染触发收敛的 `.task(id:)`）。抽成 `ViewModifier` 以打断主 `body` 的超长
 /// modifier 链，让 Swift 类型推断在合理时间内完成。
@@ -783,7 +908,7 @@ private struct DocumentContentEventsModifier: ViewModifier {
     let contentVersion: Int
     let fileURL: URL?
     let isRenderedMode: Bool
-   let scrollToLine: SourceLine?
+   let scrollToLine: DocumentViewModel.SourceScrollRequest?
   let scrollTransfer: ScrollTransfer?
   let renderedCaptureRequest: UUID?
   let pageIsLoading: Bool
@@ -798,7 +923,7 @@ private struct DocumentContentEventsModifier: ViewModifier {
     /// 按变更种类走渲染闸门：`.content` 仅 Rendered 请求；`.fileURL`/`.contentVersion`/
     /// `.displayScale` 始终请求（预热隐藏 WebView）；`.displayMode` 仅进入 Rendered 请求。
     let onRequestRenderIfNeeded: (WebViewRenderChange) -> Void
-   let onScrollToLineChange: (SourceLine?) -> Void
+   let onScrollToLineChange: (DocumentViewModel.SourceScrollRequest?) -> Void
   let onScrollTransferChange: (ScrollTransfer?) -> Void
   let onRenderedCaptureRequest: () -> Void
   let onLoadingChange: (Bool) -> Void

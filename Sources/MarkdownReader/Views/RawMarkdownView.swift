@@ -7,7 +7,7 @@ struct RawMarkdownView: View {
     @Binding var content: String
     var fontSize: CGFloat = 13
     var contentPadding: CGFloat = 20
-    var scrollToSourceLine: SourceLine?
+    var scrollToSourceLineRequest: DocumentViewModel.SourceScrollRequest?
     var fileURL: URL?
     /// 是否处于活跃状态（Raw 模式），用于自动获取焦点
     var isActive: Bool = false
@@ -35,7 +35,7 @@ struct RawMarkdownView: View {
             content: $content,
             fontSize: fontSize,
             contentPadding: contentPadding,
-            scrollToSourceLine: scrollToSourceLine,
+            scrollToSourceLineRequest: scrollToSourceLineRequest,
             themeColors: themeColors,
             fileURL: fileURL,
             isActive: isActive,

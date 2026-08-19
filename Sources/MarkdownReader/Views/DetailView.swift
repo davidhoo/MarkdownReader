@@ -498,7 +498,7 @@ struct DetailView: View {
         OutlineView(
             items: documentViewModel.outlineItems,
             onSelect: { item in
-                documentViewModel.requestScroll(to: item.sourceLine)
+                documentViewModel.requestOutlineScroll(to: item.sourceLine)
             },
             activeLineNumber: activeOutlineLineNumber
         )
@@ -627,7 +627,7 @@ struct DetailView: View {
             fileURL: documentViewModel.currentFileURL,
             contentPadding: settings.contentPaddingPoints,
             maxContentWidthFollowsWindow: settings.maxContentWidthFollowsWindow,
-         scrollToSourceLine: documentViewModel.scrollToSourceLineRequest,
+         scrollToSourceLineRequest: documentViewModel.scrollToSourceLineRequest,
          themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
        isDark: settings.resolvedThemeType == .dark,
         documentCopyEnabled: settings.enableDocumentCopy,
@@ -692,7 +692,7 @@ struct DetailView: View {
                 ),
                 fontSize: settings.sourceFontPointSize,
                 contentPadding: settings.contentPaddingPoints,
-                scrollToSourceLine: documentViewModel.scrollToSourceLineRequest,
+                scrollToSourceLineRequest: documentViewModel.scrollToSourceLineRequest,
                 fileURL: documentViewModel.currentFileURL,
                 isActive: documentViewModel.displayMode == .raw,
                 isFindBarVisible: appViewModel.isFindBarVisible,

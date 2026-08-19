@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 import SwiftUI
+import JavaScriptCore
 @testable import MarkdownReaderKit
 @testable import MarkdownReader
 
@@ -10,6 +11,30 @@ import SwiftUI
 /// 仅在 Raw 编辑器字符偏移计算边界转换为 0-based 行索引；HTML `data-line` 与
 /// JavaScript `MR.scrollToLine` 保持既有 1-based 协议。
 final class SourcePositionSyncTests: XCTestCase {
+
+    // MARK: - Rendered JavaScript 源码锚点采样
+
+    /// 大纲顶部对齐会使视口顶部落在「前一块结束」与「下一标题开始」之间的 CSS 留白。
+    /// 此时锚点必须在相邻源码范围间插值；绝不能落到整篇文档最后一个块的末行，
+    /// 否则 Rendered → Raw 会先显示旧位置、随后被异步交接拉到文末。
+    func testRenderedAnchorCaptureInterpolatesViewportGapInsteadOfUsingLastBlock() throws {
+        let context = try makeMarkdownReaderJavaScriptContext(
+            scrollTop: 188,
+            blocks: [
+                (start: 1, end: 3, top: 0, bottom: 160),
+                (start: 5, end: 5, top: 200, bottom: 230),
+                (start: 100, end: 103, top: 5_000, bottom: 5_200)
+            ]
+        )
+
+        let sourcePosition = try XCTUnwrap(
+            context.evaluateScript("MR.captureSourceScrollAnchor().sourcePosition")
+        ).toDouble()
+
+        // 前一块 source 末行 = 3，间隙源码范围为 4...5；
+        // 视口顶端在视觉间隙的 70% 处，故 sourcePosition = 4.7。
+        XCTAssertEqual(sourcePosition, 4.7, accuracy: 0.0001)
+    }
 
     // MARK: - SourceLine 值类型
 
@@ -92,10 +117,102 @@ final class SourcePositionSyncTests: XCTestCase {
         let viewModel = DocumentViewModel()
         viewModel.requestScroll(to: SourceLine(oneBased: 42))
 
-        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.oneBased, 42)
+        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.sourceLine.oneBased, 42)
+        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.placement, .reveal)
 
         viewModel.clearScrollRequest()
         XCTAssertNil(viewModel.scrollToSourceLineRequest)
+    }
+
+    // MARK: - 渲染视图按行跳转桥接参数
+
+    /// 大纲顶部落点携带常量 12pt CSS 像素边距，不随 zoom 缩放：CSS `zoom` 已缩放布局，
+    /// `getBoundingClientRect`/`scrollY` 同处缩放后坐标系，视觉边距直接用 12。
+    @MainActor
+    func testRenderedOutlineBridgeUsesConstantTopMargin() {
+        let request = DocumentViewModel.SourceScrollRequest(
+            id: UUID(),
+            sourceLine: SourceLine(oneBased: 24),
+            placement: .outlineTop
+        )
+
+        let arguments = RenderedLineNavigationBridge.arguments(for: request, zoomLevel: 2)
+
+        XCTAssertEqual(arguments.lineNumber, 24)
+        XCTAssertEqual(arguments.placement, .outlineTop)
+        // 无论 zoom，视觉边距恒为 12 缩放后 CSS 像素。
+        XCTAssertEqual(arguments.topMarginCSSPixels, 12, accuracy: 0.001)
+    }
+
+    /// 查找落点不携带顶部边距，继续走既有居中策略。
+    @MainActor
+    func testRenderedRevealBridgeCarriesNoTopMargin() {
+        let request = DocumentViewModel.SourceScrollRequest(
+            id: UUID(),
+            sourceLine: SourceLine(oneBased: 24),
+            placement: .reveal
+        )
+
+        let arguments = RenderedLineNavigationBridge.arguments(for: request, zoomLevel: 1.5)
+
+        XCTAssertEqual(arguments.placement, .reveal)
+        XCTAssertEqual(arguments.topMarginCSSPixels, 0, accuracy: 0.001)
+    }
+
+    // MARK: - 大纲跳转落点策略（.outlineTop）与请求身份
+
+    /// 大纲点击发布 `.outlineTop` 请求，携带目标源码行与统一顶部对齐落点。
+    @MainActor
+    func testOutlineScrollRequestCarriesTopAlignment() {
+        let viewModel = DocumentViewModel()
+
+        viewModel.requestOutlineScroll(to: SourceLine(oneBased: 24))
+
+        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.sourceLine.oneBased, 24)
+        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.placement, .outlineTop)
+    }
+
+    /// 查找等既有显式跳转仍走 `.reveal`，落点策略不被大纲改动牵连。
+    @MainActor
+    func testFindScrollRequestKeepsRevealPlacement() {
+        let viewModel = DocumentViewModel()
+
+        viewModel.requestScroll(to: SourceLine(oneBased: 24))
+
+        XCTAssertEqual(viewModel.scrollToSourceLineRequest?.placement, .reveal)
+    }
+
+    /// 连续点击同一个大纲标题也必须带新请求身份，强制目的视图重新触发定位。
+    @MainActor
+    func testRepeatedOutlineSelectionGetsNewRequestIdentity() {
+        let viewModel = DocumentViewModel()
+        viewModel.requestOutlineScroll(to: SourceLine(oneBased: 24))
+        let firstID = try! XCTUnwrap(viewModel.scrollToSourceLineRequest?.id)
+
+        viewModel.requestOutlineScroll(to: SourceLine(oneBased: 24))
+
+        XCTAssertNotEqual(viewModel.scrollToSourceLineRequest?.id, firstID)
+    }
+
+    /// 保护性测试：`.reveal` 与 `.outlineTop` 共享同一 1-based `SourceLine` 协议，
+    /// 避免行号被改回裸 `Int`。
+    @MainActor
+    func testScrollPlacementsShareOneBasedSourceLineProtocol() {
+        let reveal = DocumentViewModel.SourceScrollRequest(
+            id: UUID(),
+            sourceLine: SourceLine(oneBased: 7),
+            placement: .reveal
+        )
+        let outlineTop = DocumentViewModel.SourceScrollRequest(
+            id: UUID(),
+            sourceLine: SourceLine(oneBased: 9),
+            placement: .outlineTop
+        )
+
+        XCTAssertEqual(reveal.sourceLine.oneBased, 7)
+        XCTAssertEqual(outlineTop.sourceLine.oneBased, 9)
+        XCTAssertEqual(reveal.placement, .reveal)
+        XCTAssertEqual(outlineTop.placement, .outlineTop)
     }
 
     @MainActor
@@ -134,6 +251,81 @@ final class SourcePositionSyncTests: XCTestCase {
         )
         XCTAssertNil(viewModel.scrollTransfer)
         XCTAssertNil(viewModel.scrollToSourceLineRequest)
+    }
+
+    // MARK: - 渲染视图显式请求 pending 取消策略（RenderedExplicitScrollRequestPolicy）
+
+    /// pending 请求在请求被取消（currentRequest == nil）后必须丢弃，
+    /// 即便仍处于 Rendered 模式、页面已加载完成也不执行。
+    @MainActor
+    func testRenderedPendingRequestIsDiscardedAfterCancellation() {
+        let request = DocumentViewModel.SourceScrollRequest(
+            id: UUID(), sourceLine: SourceLine(oneBased: 42), placement: .outlineTop
+        )
+
+        XCTAssertFalse(RenderedExplicitScrollRequestPolicy.shouldApplyPending(
+            pendingRequest: request,
+            currentRequest: nil,
+            isRenderedMode: true,
+            isLoading: false
+        ))
+    }
+
+    /// pending 请求执行须同时满足：pending ID 仍是当前请求、当前为 Rendered 模式、
+    /// 页面不在加载中。任一条件不满足均丢弃。
+    @MainActor
+    func testRenderedPendingRequestRequiresCurrentRequestAndRenderedMode() {
+        let request = DocumentViewModel.SourceScrollRequest(
+            id: UUID(), sourceLine: SourceLine(oneBased: 42), placement: .outlineTop
+        )
+
+        XCTAssertTrue(RenderedExplicitScrollRequestPolicy.shouldApplyPending(
+            pendingRequest: request,
+            currentRequest: request,
+            isRenderedMode: true,
+            isLoading: false
+        ))
+        // 非 Rendered 模式：隐藏 WebView 不得执行定位。
+        XCTAssertFalse(RenderedExplicitScrollRequestPolicy.shouldApplyPending(
+            pendingRequest: request,
+            currentRequest: request,
+            isRenderedMode: false,
+            isLoading: false
+        ))
+    }
+
+    /// 页面仍在加载时不得立即执行 pending；待加载结束后由调用方再次校验。
+    @MainActor
+    func testRenderedPendingRequestDeferredWhileLoading() {
+        let request = DocumentViewModel.SourceScrollRequest(
+            id: UUID(), sourceLine: SourceLine(oneBased: 42), placement: .outlineTop
+        )
+
+        XCTAssertFalse(RenderedExplicitScrollRequestPolicy.shouldApplyPending(
+            pendingRequest: request,
+            currentRequest: request,
+            isRenderedMode: true,
+            isLoading: true
+        ))
+    }
+
+    /// 请求被新请求替换：pending 旧 UUID 不得执行，避免隐藏 WebView 的延迟旧定位
+    /// 覆盖模式切换后的锚点位置。
+    @MainActor
+    func testRenderedPendingRequestDiscardedWhenReplacedByNewRequest() {
+        let old = DocumentViewModel.SourceScrollRequest(
+            id: UUID(), sourceLine: SourceLine(oneBased: 42), placement: .outlineTop
+        )
+        let replacement = DocumentViewModel.SourceScrollRequest(
+            id: UUID(), sourceLine: SourceLine(oneBased: 57), placement: .outlineTop
+        )
+
+        XCTAssertFalse(RenderedExplicitScrollRequestPolicy.shouldApplyPending(
+            pendingRequest: old,
+            currentRequest: replacement,
+            isRenderedMode: true,
+            isLoading: false
+        ))
     }
 
     // MARK: - SourceScrollAnchor：模式切换的小数源码位置合同
@@ -572,5 +764,53 @@ final class SourcePositionSyncTests: XCTestCase {
         XCTAssertNotNil(viewModel.scrollTransfer, "旧 contentVersion 回执不得清除当前交接")
         viewModel.acknowledgeScrollTransfer(id: transfer.id, destination: .rendered, contentVersion: transfer.contentVersion)
         XCTAssertNil(viewModel.scrollTransfer, "正确 contentVersion 回执应清除当前交接")
+    }
+
+    /// 在最小 DOM stub 中加载随应用打包的真实脚本；`readyState = loading` 阻止
+    /// `MR.init()` 访问与本测试无关的 DOM API。
+    private func makeMarkdownReaderJavaScriptContext(
+        scrollTop: Double,
+        blocks: [(start: Int, end: Int, top: Double, bottom: Double)]
+    ) throws -> JSContext {
+        let blockArguments = blocks.map {
+            "block(\($0.start), \($0.end), \($0.top), \($0.bottom))"
+        }.joined(separator: ", ")
+        let bootstrap = """
+        var window = this;
+        window.scrollY = \(scrollTop);
+        window.innerHeight = 100;
+        var __mrBlocks = [\(blockArguments)];
+        function block(start, end, top, bottom) {
+          return {
+            getAttribute: function(name) {
+              if (name === 'data-source-start') return String(start);
+              if (name === 'data-source-end') return String(end);
+              return null;
+            },
+            getBoundingClientRect: function() {
+              return { top: top - window.scrollY, bottom: bottom - window.scrollY };
+            }
+          };
+        }
+        var document = {
+          readyState: 'loading',
+          documentElement: { scrollTop: 0, scrollHeight: 2000 },
+          addEventListener: function() {},
+          querySelectorAll: function(selector) {
+            return selector === '[data-source-start][data-source-end]' ? __mrBlocks : [];
+          }
+        };
+        """
+        let context = try XCTUnwrap(JSContext())
+        context.evaluateScript(bootstrap)
+
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let scriptURL = repositoryRoot
+            .appendingPathComponent("Sources/MarkdownReader/Resources/js/markdown-reader.js")
+        context.evaluateScript(try String(contentsOf: scriptURL, encoding: .utf8))
+        return context
     }
 }
