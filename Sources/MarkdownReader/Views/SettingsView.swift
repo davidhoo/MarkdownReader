@@ -57,7 +57,8 @@ struct GeneralSettingsView: View {
                     Text(L10n.tr(.displayModeRaw, language: language)).tag(DisplayMode.raw)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 200)
+                .labelsHidden()
+                .frame(width: 200, alignment: .leading)
             }
 
             SettingsDivider()

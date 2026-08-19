@@ -375,7 +375,8 @@ mark {
 .mr-document-copy-btn {
   position: fixed;
   top: 3px;
-  right: 11px;
+  /* 11px Raw 外层内距 - 8px WebKit scrollbar，落在同一物理右缘。 */
+  right: 3px;
   z-index: 50;
   width: 24px;
   height: 24px;
