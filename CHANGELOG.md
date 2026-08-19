@@ -14,6 +14,46 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.4.0] - 2026-08-19
+
+### 新增
+
+- **Raw ↔ Rendered 模式切换保持阅读位置**：切换渲染/原文模式时此前的整数行号定位会跳到行首、丢失行内阅读位置，长文档切换后常需重新滚动找回。改为基于小数源码位置的模式切换位置交接系统
+  - 新增 `SourceScrollAnchor`（1-based 小数源码位置 + 全文滚动进度兜底，值域钳制不崩溃）与一次性 `ScrollTransfer`（目标模式 + UUID + `contentVersion` 三重校验，过期内容、过期模式或快速 A→B→A 切换产生的回调一律丢弃）
+  - 新增 `SourceAnchorResolution` 纯策略：源码范围/DOM/Raw 排版任一可用时用精确小数位置定位，否则降级到全文进度兜底，两者都不可用时回到文档顶部
+  - 渲染 HTML 为块级元素输出 `data-source-start`/`data-source-end` 完整源码闭区间；JS 新增 `captureSourceScrollAnchor` / `scrollToSourceScrollAnchor`，视口落于块间 CSS 留白时按相邻源码间隙插值，避免错误回退到文末
+  - Raw 侧 `RawSourceScrollAnchor` 采样视口顶部小数位置（监听活跃 `NSScrollView` 的 `boundsDidChange`，100 ms 防抖，程序化跳转动画结束后补报一次），仅活跃编辑器可写回，隐藏常驻 Raw 不得覆盖 Rendered 状态，不动光标、不传像素 Y
+  - `DetailView` 统一 Picker、菜单、快捷键进入主动采样 + token 保护管线；`WindowCommandTarget` 新增 `displayModeSwitchHandler` 路由到视图级管线
+- **大纲导航统一顶部对齐**：大纲点击此前的落点 Raw 约 1/3 视口、Rendered 居中，视觉重心不一致，点击同一标题有明显跳变。现统一为目标标题距视口顶部约 12pt
+  - 新增 `SourceScrollPlacement`（`.reveal` / `.outlineTop`）与带 UUID 身份的 `SourceScrollRequest`，区分大纲导航与查找定位的落点意图；查找等既有跳转仍走 `.reveal`，保持原有 Raw 约 1/3、Rendered 居中体验不变
+  - `DocumentViewModel` 新增 `requestOutlineScroll(to:)`，Raw 端提取 `SourceLineNavigationGeometry` 纯几何函数按 placement 计算 origin 并钳制
+  - 大纲定位保留平滑动画，Raw 与 Rendered 动画时长统一为 0.25 秒 `easeOut`；Rendered 用当前 `zoomLevel` 将 12pt 转成 CSS 像素后传入 JavaScript，避免缩放时边距随网页缩放变形
+  - 每次大纲点击都带新请求身份，连续点击同一标题也重新触发定位；不移动 Raw 光标/选区
+
+### 修复
+
+- **模式切换后旧显式滚动请求覆盖锚点交接的竞态**：大纲导航后从 Rendered 切到 Raw，此前会先正确落位再跳回大纲标题位置（先对后错）
+  - `ExplicitScrollRequestExecutionPolicy` 保证同一请求 UUID 在一个视图端最多调度一次，执行已调度闭包前二次验证（当前 Raw 仍活跃且 `scrollToSourceLineRequest?.id` 匹配），模式切换清空请求后所有已排队旧闭包自动失效
+  - Rendered 端新增 `RenderedExplicitScrollRequestPolicy` 与 `RenderedLineNavigationBridge`，pending 请求在取消、模式变化或内容替换时丢弃；`isRenderedMode` didSet 清除不兼容 pending
+- **渲染模式切换闪现空白或旧渲染内容**：Raw → Rendered 切换期间 WebView 内容替换未完成就让用户看到中间状态
+  - 新增 `RenderedModeTransitionState` 纯状态机：Raw → Rendered 切换第一步立即要求 Raw 保持可见挡住 WebView，只有目标渲染世代完成**且** `ScrollTransfer` 回执后 Raw 才退场
+  - 新增 `WebViewContentReplacementCompletionPolicy`：只有 `MR.replaceContent` 返回显式 `true` 且世代仍为最新请求时才报告完成（`false`/`nil`/非 Boolean/过期世代一律不完成），避免 DOM 未真正替换时结束过渡层
+- **编辑器末尾滚动抖动**：长文档末尾连续回车、新增行或跳转最后一行时，插入点可能被挤出可见区域并与滚动位置相互拉扯。改为在文档底部保留约一行高度的空间，确保插入点始终可见，消除末尾编辑时的滚动跳动
+- **JavaScript 最近块兜底分支 TypeError**：`scrollToLine` 最近 `data-line` 兜底分支存在不可重新赋值的 `let` 变量重赋值，已修复
+
+### 变更
+
+- **统一源码行坐标契约**：新增 1-based `SourceLine` 值类型（`oneBased` / `zeroBasedIndex` 双视图，非法输入触发 `precondition`），统一大纲源码行号契约。`OutlineItem.lineNumber` 替换为 `sourceLine: SourceLine`，`OutlineService` 用 `zeroBasedIndex` 构造（ATX + Setext 块均覆盖），禁止裸 `Int` 传递行号，避免 0-based 数组索引与 1-based 行号混用导致的偏差
+- **WebView 渲染闸门细化**：新增 `WebViewRenderEligibility` 区分 content / fileURL / contentVersion / displayMode 四类文档输入变更，仅 Rendered 模式才对纯内容编辑请求隐藏常驻 WebView 重渲染（Raw 编辑时隐藏 WebView 保持上次已应用快照，不随每次击键重渲染）
+
+### 测试
+
+- 全部 271 个测试通过（v2.3.2 为 196 个，新增约 75 个）
+- 新增 `SourcePositionSyncTests`：覆盖 `SourceScrollAnchor` / `ScrollTransfer` 生命周期与 contentVersion 校验、源码闭区间映射、Raw 视口采样与定位、命令路由、小数锚点交接、显式请求取消与单次调度、真实 AppKit 布局定位
+- 新增 `SyntaxHighlightedEditorScrollTests`：覆盖编辑器末尾滚动抖动修复与大纲导航几何计算
+- 扩展 `WebViewRenderSchedulerTests`：覆盖渲染模式过渡状态机、隐藏 WebView 内容渲染闸门、显式替换完成回执策略
+- 新增 `WindowCommandTargetTests`：覆盖模式切换路由到视图级管线
+
 ## [2.3.2] - 2026-08-17
 
 ### 修复
