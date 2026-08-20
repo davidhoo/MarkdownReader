@@ -196,6 +196,12 @@ struct MarkdownReaderApp: App {
         if appVM.isSingleFileMode, let url = appVM.singleFileURL {
             return url.lastPathComponent
         }
+        if let workspaceURL = appVM.workspaceFileURL {
+            return workspaceURL.lastPathComponent
+        }
+        if appVM.rootDirectories.count > 1 {
+            return L10n.tr(.workspaceUntitledName, language: SettingsModel.shared.languagePref.resolvedLanguage)
+        }
         if let dir = appVM.rootDirectory {
             return dir.lastPathComponent
         }

@@ -101,7 +101,8 @@ struct DetailView: View {
             contentArea
                 .overlay {
                     // Task 11：拖拽 hover 直接读所属 session 的 appViewModel 状态（窗口级）。
-                    if appViewModel.isDropTargeted {
+                    // 悬停在侧边栏区域时高亮让位给侧边栏（添加文件夹提示）。
+                    if appViewModel.isDropTargeted && !appViewModel.isSidebarDropTargeted {
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(themeColors.accent, lineWidth: 2)
                             .padding(4)

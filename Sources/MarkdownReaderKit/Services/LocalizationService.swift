@@ -285,6 +285,20 @@ public enum L10n {
         case windowMenuZoom
         case windowMenuBringAllToFront
         case windowMenu
+
+        // 工作区（多根目录）
+        case menuAddFolderToWorkspace
+        case menuSaveWorkspace
+        case menuSaveWorkspaceAs
+        case workspaceRemoveFolder
+        case workspaceUntitledName
+        case workspaceRootDeleted
+        case workspaceMissingFolders
+        case workspaceAlreadyAdded
+        case workspaceNestedConflict
+        case unsavedWorkspaceTitle
+        case unsavedWorkspaceMessage
+        case workspaceLoadFailed
     }
 
     // MARK: - 翻译字典
@@ -489,6 +503,18 @@ public enum L10n {
         .windowMenuZoom: "Zoom",
         .windowMenuBringAllToFront: "Bring All to Front",
         .windowMenu: "Window",
+        .menuAddFolderToWorkspace: "Add Folder to Workspace\u{2026}",
+        .menuSaveWorkspace: "Save Workspace",
+        .menuSaveWorkspaceAs: "Save Workspace As\u{2026}",
+        .workspaceRemoveFolder: "Remove Folder from Workspace",
+        .workspaceUntitledName: "Untitled Workspace",
+        .workspaceRootDeleted: "The folder has been deleted or moved",
+        .workspaceMissingFolders: "The folders in this workspace can no longer be found.",
+        .workspaceAlreadyAdded: "This folder is already in the workspace.",
+        .workspaceNestedConflict: "This folder overlaps with an existing folder in the workspace.",
+        .unsavedWorkspaceTitle: "Workspace has unsaved changes",
+        .unsavedWorkspaceMessage: "Do you want to save the workspace before closing?",
+        .workspaceLoadFailed: "Failed to open the workspace file.",
     ]
 
     private static let zhCN: [Key: String] = [
@@ -691,6 +717,18 @@ public enum L10n {
         .windowMenuZoom: "缩放",
         .windowMenuBringAllToFront: "将全部窗口前置",
         .windowMenu: "窗口",
+        .menuAddFolderToWorkspace: "添加文件夹到工作区\u{2026}",
+        .menuSaveWorkspace: "保存工作区",
+        .menuSaveWorkspaceAs: "工作区另存为\u{2026}",
+        .workspaceRemoveFolder: "从工作区移除文件夹",
+        .workspaceUntitledName: "未命名工作区",
+        .workspaceRootDeleted: "目录已被删除或移动",
+        .workspaceMissingFolders: "找不到此工作区中的文件夹。",
+        .workspaceAlreadyAdded: "该文件夹已在工作区中。",
+        .workspaceNestedConflict: "该文件夹与工作区中已有文件夹存在嵌套关系。",
+        .unsavedWorkspaceTitle: "工作区有未保存的更改",
+        .unsavedWorkspaceMessage: "关闭前是否保存工作区？",
+        .workspaceLoadFailed: "无法打开工作区文件。",
     ]
 
     private static let zhTW: [Key: String] = [
@@ -893,6 +931,18 @@ public enum L10n {
         .windowMenuZoom: "縮放",
         .windowMenuBringAllToFront: "將全部視窗帶至最前",
         .windowMenu: "視窗",
+        .menuAddFolderToWorkspace: "將資料夾加入工作區\u{2026}",
+        .menuSaveWorkspace: "儲存工作區",
+        .menuSaveWorkspaceAs: "工作區另存新檔\u{2026}",
+        .workspaceRemoveFolder: "從工作區移除資料夾",
+        .workspaceUntitledName: "未命名工作區",
+        .workspaceRootDeleted: "目錄已被刪除或移動",
+        .workspaceMissingFolders: "找不到此工作區中的資料夾。",
+        .workspaceAlreadyAdded: "該資料夾已在工作區中。",
+        .workspaceNestedConflict: "該資料夾與工作區中已有資料夾存在巢狀關係。",
+        .unsavedWorkspaceTitle: "工作區有未儲存的變更",
+        .unsavedWorkspaceMessage: "關閉前是否儲存工作區？",
+        .workspaceLoadFailed: "無法開啟工作區檔案。",
     ]
 
     // MARK: - 查找

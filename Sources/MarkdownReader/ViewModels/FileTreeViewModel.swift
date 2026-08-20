@@ -23,11 +23,43 @@ final class FileTreeViewModel {
     /// 错误信息
     var errorMessage: String?
 
-    /// 是否为空目录（无 Markdown 文件）
+    /// 是否为空目录（无 Markdown 文件；多根时为「所有根均无 Markdown」）
     var isEmptyDirectory: Bool = false
 
     /// 当前界面语言（右键菜单对话框使用）
     var language: Language = .en
+
+    // MARK: - 工作区状态
+    // 注：关联的工作区文件 URL 由 AppViewModel.workspaceFileURL 单一持有（窗口标题同源），
+    // 本 VM 只维护目录树与脏标记。
+
+    /// 工作区脏标记：根目录增删后相对已保存内容变脏；保存成功后复位。
+    private(set) var workspaceIsDirty: Bool = false
+
+    /// 会话管理的树变更抑制标记（一次性）。
+    ///
+    /// session 直接驱动 loadWorkspace/addFolder/removeFolder 前置位，
+    /// 视图层 DirectoryChangeModifier 消费后跳过破坏性重载，
+    /// 避免与 session 的加载/选中恢复形成竞态。
+    var suppressNextDirectoryChangeReaction = false
+
+    /// 当前加载/加载中的根路径集合（loadWorkspace 入口同步记录，供视图层去重判断）。
+    private(set) var activeRootPaths: Set<String> = []
+
+    /// 判断给定根列表是否与当前加载请求一致（供 DirectoryChangeModifier 去重）。
+    func matchesActiveRoots(_ folders: [URL]) -> Bool {
+        Set(folders.map(\.standardizedFileURL.path)) == activeRootPaths
+    }
+
+    /// 保存成功后由 session 调用：复位脏标记。
+    func markWorkspaceSaved() {
+        workspaceIsDirty = false
+    }
+
+    /// 全部根目录 URL（有序，多根工作区）。
+    var rootDirectories: [URL] {
+        nodes.map(\.path)
+    }
 
     // MARK: - 依赖
 
@@ -61,47 +93,92 @@ final class FileTreeViewModel {
 
     // MARK: - 方法
 
-    /// 加载目录树
+    /// 加载目录树（单根，等价于单根工作区）
     /// - Parameter directory: 根目录 URL
     func loadDirectory(_ directory: URL) async {
+        await loadWorkspace(folders: [directory])
+    }
+
+    /// 加载多根工作区。
+    ///
+    /// 单根调用与原 `loadDirectory` 行为一致；多根时逐根扫描，
+    /// 不存在的目录跳过（不整体失败），全部缺失时才报错。
+    /// - Parameters:
+    ///   - folders: 根目录列表（有序，决定侧边栏展示顺序）
+    ///   - restoredExpandedDirs: 恢复的展开目录集合；nil 时默认展开所有根
+    ///   - restoredSelection: 恢复的选中文件；nil 时不改选中
+    func loadWorkspace(
+        folders: [URL],
+        restoredExpandedDirs: Set<URL>? = nil,
+        restoredSelection: URL? = nil
+    ) async {
         isLoading = true
         errorMessage = nil
         isEmptyDirectory = false
+        activeRootPaths = Set(folders.map(\.standardizedFileURL.path))
+        workspaceIsDirty = false
 
         // 停止之前的监控
         fileSystemWatcher.stopWatching()
 
-        do {
-            let children = try await fileService.scanDirectory(
-                directory,
-                showHiddenFiles: settings.showHiddenFiles,
-                showNonMarkdownFiles: settings.showNonMarkdownFiles
-            )
-            isEmptyDirectory = !fileService.directoryContainsMarkdown(
-                directory,
-                showHiddenFiles: settings.showHiddenFiles
-            )
+        var roots: [FileNode] = []
+        var allEmpty = true
+        for folder in folders {
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir),
+                  isDir.boolValue else {
+                // 目录缺失：跳过（工作区恢复时容忍）
+                continue
+            }
+            do {
+                let children = try await fileService.scanDirectory(
+                    folder,
+                    showHiddenFiles: settings.showHiddenFiles,
+                    showNonMarkdownFiles: settings.showNonMarkdownFiles
+                )
+                if fileService.directoryContainsMarkdown(
+                    folder,
+                    showHiddenFiles: settings.showHiddenFiles
+                ) {
+                    allEmpty = false
+                }
+                roots.append(FileNode(
+                    name: folder.lastPathComponent,
+                    path: folder,
+                    isDirectory: true,
+                    children: children
+                ))
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+        nodes = roots
 
-            // 根目录作为一级节点显示，子目录内容作为其 children
-            let rootNode = FileNode(
-                name: directory.lastPathComponent,
-                path: directory,
-                isDirectory: true,
-                children: children
-            )
-            nodes = [rootNode]
-
-            // 默认展开根目录（显示第一级目录和文件）
-            expandedDirs.insert(directory)
-        } catch {
-            errorMessage = error.localizedDescription
-            nodes = []
+        if let restored = restoredExpandedDirs {
+            // 恢复模式：与现存路径求交集，避免脏状态。
+            // 按路径字符串比较：不同来源构造的目录 URL（appendingPathComponent vs
+            // contentsOfDirectory）内部表示可能不同，直接 URL 相等性不可靠。
+            let restoredPaths = Set(restored.map(\.path))
+            let allPaths = collectAllPaths(from: nodes)
+            expandedDirs = Set(allPaths.filter { restoredPaths.contains($0.path) })
+        } else {
+            // 默认展开所有根目录（显示第一级目录和文件）
+            expandedDirs = Set(roots.map(\.path))
+        }
+        if let restoredSelection {
+            // 优先映射到树内同路径节点 URL：外部构造的 URL（工作区文件反序列化）与
+            // 扫描结果 URL 内部表示可能不同，直接用于选中高亮比对会失配。
+            let allNodes = collectAllPaths(from: nodes)
+            selectedFileURL = allNodes.first { $0.path == restoredSelection.path } ?? restoredSelection
         }
 
+        isEmptyDirectory = !roots.isEmpty && allEmpty
         isLoading = false
 
-        // 开始监控目录变化
-        startWatching(directory)
+        // 开始监控所有根目录变化
+        if !roots.isEmpty {
+            startWatching(roots.map(\.path))
+        }
     }
 
     /// 刷新目录树（由文件系统监控触发，不显示加载状态，保留展开和选中状态）
@@ -112,58 +189,82 @@ final class FileTreeViewModel {
             return
         }
 
-        guard let dir = rootDirectory else { return }
-
-        // 检查根目录是否仍然存在
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else {
-            // 根目录已被删除或移动
-            clearDirectory()
-            errorMessage = "目录已被删除或移动"
-            return
-        }
+        let roots = nodes
+        guard !roots.isEmpty else { return }
 
         isRefreshing = true
 
-        do {
-            let children = try await fileService.scanDirectory(
-                dir,
-                showHiddenFiles: settings.showHiddenFiles,
-                showNonMarkdownFiles: settings.showNonMarkdownFiles
-            )
-
-            let rootNode = FileNode(
-                name: dir.lastPathComponent,
-                path: dir,
-                isDirectory: true,
-                children: children
-            )
-            nodes = [rootNode]
-
-            // 清理已不存在的展开目录
-            let allPaths = Set(collectAllPaths(from: nodes))
-            expandedDirs = expandedDirs.intersection(allPaths)
-            expandedDirs.insert(dir)
-
-            // 如果选中的文件已不存在，清除选中
-            // 仅当选中文件的路径位于当前根目录下时才清除
-            // 单文件模式下，选中文件可能不在根目录树中，不应被清除
-            if let selected = selectedFileURL,
-               selected.path.hasPrefix(dir.path + "/"),
-               !allPaths.contains(selected) {
-                selectedFileURL = nil
+        var newRoots: [FileNode] = []
+        var allEmpty = true
+        for root in roots {
+            // 检查根目录是否仍然存在；被删除/移动的根丢弃
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: root.path.path, isDirectory: &isDir),
+                  isDir.boolValue else {
+                continue
             }
-
-            isEmptyDirectory = !fileService.directoryContainsMarkdown(
-                dir,
-                showHiddenFiles: settings.showHiddenFiles
-            )
-            errorMessage = nil
-        } catch {
-            // 刷新失败时不覆盖已有数据，仅记录错误
+            do {
+                let children = try await fileService.scanDirectory(
+                    root.path,
+                    showHiddenFiles: settings.showHiddenFiles,
+                    showNonMarkdownFiles: settings.showNonMarkdownFiles
+                )
+                if fileService.directoryContainsMarkdown(
+                    root.path,
+                    showHiddenFiles: settings.showHiddenFiles
+                ) {
+                    allEmpty = false
+                }
+                newRoots.append(FileNode(
+                    name: root.path.lastPathComponent,
+                    path: root.path,
+                    isDirectory: true,
+                    children: children
+                ))
+            } catch {
+                // 刷新失败时保留旧根数据，不覆盖
+                newRoots.append(root)
+            }
         }
 
+        guard !newRoots.isEmpty else {
+            // 所有根目录已被删除或移动
+            isRefreshing = false
+            clearDirectory()
+            errorMessage = L10n.tr(.workspaceRootDeleted, language: language)
+            return
+        }
+
+        nodes = newRoots
+
+        // 清理已不存在的展开目录
+        let allPaths = Set(collectAllPaths(from: nodes))
+        expandedDirs = expandedDirs.intersection(allPaths)
+        for root in newRoots {
+            expandedDirs.insert(root.path)
+        }
+
+        // 如果选中的文件已不存在，清除选中
+        // 仅当选中文件位于某个根目录下时才清除；
+        // 单文件模式下，选中文件可能不在根目录树中，不应被清除
+        if let selected = selectedFileURL {
+            let underSomeRoot = newRoots.contains { selected.path.hasPrefix($0.path.path + "/") }
+            if underSomeRoot && !allPaths.contains(selected) {
+                selectedFileURL = nil
+            }
+        }
+
+        isEmptyDirectory = allEmpty
+        errorMessage = nil
         isRefreshing = false
+
+        // 根集合变化时同步监控路径（如目录被删后剩余根）
+        fileSystemWatcher.startWatching(urls: newRoots.map(\.path)) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.refreshDirectory()
+            }
+        }
 
         // 如果刷新期间有新的变更，再次刷新
         if needsRefresh {
@@ -188,6 +289,8 @@ final class FileTreeViewModel {
         isEmptyDirectory = false
         isRefreshing = false
         needsRefresh = false
+        activeRootPaths = []
+        workspaceIsDirty = false
     }
 
     /// 切换目录展开/折叠
@@ -290,16 +393,96 @@ final class FileTreeViewModel {
         return fileURL
     }
 
-    /// 根目录 URL（供外部访问）
+    /// 根目录 URL（首个根，兼容单根语义；供外部访问）
     var rootDirectory: URL? {
         nodes.first?.path
     }
 
+    // MARK: - 工作区根目录增删
+
+    /// 添加文件夹到工作区的错误类型。
+    enum AddFolderError: Error, Equatable {
+        /// 目录已在工作区中
+        case alreadyInWorkspace
+        /// 与已有根存在嵌套关系（新目录是已有根的子目录，或包含已有根）
+        case nestedConflict
+        /// 不是有效目录
+        case notADirectory
+    }
+
+    /// 向工作区添加一个根目录。
+    ///
+    /// 校验重复与嵌套（参考 VS Code：不允许重叠的根），成功后扫描并追加到树尾，
+    /// 置脏工作区并重启监控。调用方（session）负责同步 appViewModel.rootDirectories。
+    /// - Throws: `AddFolderError`
+    func addFolder(_ url: URL) async throws {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
+              isDir.boolValue else {
+            throw AddFolderError.notADirectory
+        }
+
+        let stdNew = url.standardizedFileURL.path
+        for root in nodes {
+            let stdRoot = root.path.standardizedFileURL.path
+            if stdRoot == stdNew {
+                throw AddFolderError.alreadyInWorkspace
+            }
+            if stdNew.hasPrefix(stdRoot + "/") || stdRoot.hasPrefix(stdNew + "/") {
+                throw AddFolderError.nestedConflict
+            }
+        }
+
+        let children = try await fileService.scanDirectory(
+            url,
+            showHiddenFiles: settings.showHiddenFiles,
+            showNonMarkdownFiles: settings.showNonMarkdownFiles
+        )
+        nodes.append(FileNode(
+            name: url.lastPathComponent,
+            path: url,
+            isDirectory: true,
+            children: children
+        ))
+        expandedDirs.insert(url)
+        if fileService.directoryContainsMarkdown(url, showHiddenFiles: settings.showHiddenFiles) {
+            isEmptyDirectory = false
+        }
+        workspaceIsDirty = true
+        activeRootPaths = Set(nodes.map { $0.path.standardizedFileURL.path })
+        startWatching(nodes.map(\.path))
+    }
+
+    /// 从工作区移除一个根目录。
+    ///
+    /// 清理该根下的展开状态；选中文件位于该根下时清除选中（文档取消由视图层响应）。
+    /// 调用方（session）负责释放根目录所有权并同步 appViewModel.rootDirectories。
+    func removeFolder(_ url: URL) {
+        guard let index = nodes.firstIndex(where: { $0.path == url }) else { return }
+        let removed = nodes.remove(at: index)
+        let prefix = removed.path.path + "/"
+        expandedDirs = expandedDirs.filter { $0.path != removed.path.path && !$0.path.hasPrefix(prefix) }
+        if let selected = selectedFileURL,
+           selected.path.hasPrefix(prefix) {
+            selectedFileURL = nil
+        }
+
+        if nodes.isEmpty {
+            // 最后一个根被移除：回到欢迎页状态
+            clearDirectory(clearSelection: false)
+            return
+        }
+
+        workspaceIsDirty = true
+        activeRootPaths = Set(nodes.map { $0.path.standardizedFileURL.path })
+        startWatching(nodes.map(\.path))
+    }
+
     // MARK: - 文件监控
 
-    /// 开始监控目录变化
-    private func startWatching(_ directory: URL) {
-        fileSystemWatcher.startWatching(url: directory) { [weak self] in
+    /// 开始监控一组目录变化
+    private func startWatching(_ directories: [URL]) {
+        fileSystemWatcher.startWatching(urls: directories) { [weak self] in
             guard let self else { return }
             Task { @MainActor in
                 await self.refreshDirectory()

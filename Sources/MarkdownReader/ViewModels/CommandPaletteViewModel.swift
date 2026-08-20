@@ -35,8 +35,8 @@ final class CommandPaletteViewModel {
     /// 缓存的所有文件列表（避免每次输入变化都递归遍历文件树）
     private var cachedFiles: [CommandPaletteFileItem] = []
 
-    /// 缓存对应的根目录 URL（目录变化时使缓存失效）
-    private var cachedRootDir: URL?
+    /// 缓存对应的根目录列表（工作区根集合变化时使缓存失效）
+    private var cachedRootDirs: [URL] = []
 
     // MARK: - 依赖
 
@@ -189,20 +189,23 @@ final class CommandPaletteViewModel {
     /// 使文件缓存失效（目录变化时调用）
     func invalidateFileCache() {
         cachedFiles = []
-        cachedRootDir = nil
+        cachedRootDirs = []
     }
 
-    /// 搜索文件
+    /// 搜索文件（工作区多根：跨全部根目录搜索）
     private func searchFiles(query: String) -> [CommandPaletteFileItem] {
-        guard let fileTreeVM = fileTreeViewModel,
-              let rootDir = appViewModel?.rootDirectory ?? fileTreeVM.rootDirectory else {
+        guard let fileTreeVM = fileTreeViewModel else {
+            return searchFilesOutsideRoot(query: query)
+        }
+        let rootDirs = appViewModel?.rootDirectories ?? fileTreeVM.rootDirectories
+        guard !rootDirs.isEmpty else {
             return searchFilesOutsideRoot(query: query)
         }
 
         // 使用缓存
-        if cachedRootDir != rootDir || cachedFiles.isEmpty {
-            cachedFiles = collectAllFiles(from: fileTreeVM.nodes, rootDir: rootDir)
-            cachedRootDir = rootDir
+        if cachedRootDirs != rootDirs || cachedFiles.isEmpty {
+            cachedFiles = collectAllFiles(from: fileTreeVM.nodes, rootDirs: rootDirs)
+            cachedRootDirs = rootDirs
         }
         let allFiles = cachedFiles
 
@@ -345,21 +348,27 @@ final class CommandPaletteViewModel {
         return []
     }
 
-    /// 递归收集所有 Markdown 文件节点
-    private func collectAllFiles(from nodes: [FileNode], rootDir: URL) -> [CommandPaletteFileItem] {
+    /// 递归收集所有 Markdown 文件节点（相对路径按所属根计算，多根以「根名/相对路径」区分）
+    private func collectAllFiles(from nodes: [FileNode], rootDirs: [URL]) -> [CommandPaletteFileItem] {
+        let resolvedRoots = rootDirs.map { $0.resolvingSymlinksInPath() }
         var results: [CommandPaletteFileItem] = []
-        let resolvedRootDir = rootDir.resolvingSymlinksInPath()
         for node in nodes {
             if node.isDirectory {
                 if let children = node.children {
-                    results.append(contentsOf: collectAllFiles(from: children, rootDir: rootDir))
+                    results.append(contentsOf: collectAllFiles(from: children, rootDirs: rootDirs))
                 }
             } else {
                 guard FileService.isKnownMarkdownExtension(node.path) else { continue }
-                let relativePath: String
                 let resolvedNodePath = node.path.resolvingSymlinksInPath()
-                if resolvedNodePath.path.hasPrefix(resolvedRootDir.path + "/") {
-                    relativePath = String(resolvedNodePath.path.dropFirst(resolvedRootDir.path.count + 1))
+                // 找到所属根，计算相对路径；带根名前缀避免多根同名文件混淆
+                let matchedRoot = resolvedRoots.first {
+                    resolvedNodePath.path.hasPrefix($0.path + "/")
+                }
+                let relativePath: String
+                if let root = matchedRoot {
+                    let rel = String(resolvedNodePath.path.dropFirst(root.path.count + 1))
+                    let rootName = root.lastPathComponent
+                    relativePath = rootDirs.count > 1 ? "\(rootName)/\(rel)" : rel
                 } else {
                     relativePath = node.path.lastPathComponent
                 }
@@ -380,19 +389,20 @@ final class CommandPaletteViewModel {
               let fileTreeVM = fileTreeViewModel else { return }
 
         // 解析符号链接后再比较路径，确保软链接路径和真实路径都能正确匹配
-        if let rootDir = appVM.rootDirectory {
-            let resolvedURL = url.resolvingSymlinksInPath()
+        let resolvedURL = url.resolvingSymlinksInPath()
+        let inSomeRoot = appVM.rootDirectories.contains { rootDir in
             let resolvedRootDir = rootDir.resolvingSymlinksInPath()
-            if resolvedURL.path.hasPrefix(resolvedRootDir.path + "/") {
-                // 回归修复：目录内文件复用与目录树点击同一套窗口内导航规则
-                // （requestFileSelection），所有权冲突时激活 owner、不改本窗口选中项。
-                fileTreeVM.onSelectFileViaSession?(url) ?? {
-                    fileTreeVM.selectedFileURL = url
-                }()
-                return
-            }
+            return resolvedURL.path.hasPrefix(resolvedRootDir.path + "/")
         }
-        // 不在当前根目录下，通过 Coordinator 路由（外部打开去重）
+        if inSomeRoot {
+            // 回归修复：目录内文件复用与目录树点击同一套窗口内导航规则
+            // （requestFileSelection），所有权冲突时激活 owner、不改本窗口选中项。
+            fileTreeVM.onSelectFileViaSession?(url) ?? {
+                fileTreeVM.selectedFileURL = url
+            }()
+            return
+        }
+        // 不在当前工作区根目录下，通过 Coordinator 路由（外部打开去重）
         coordinator?.enqueue(OpenRequest(url: url, source: .commandPalette, preferredWindowID: windowID))
     }
 }

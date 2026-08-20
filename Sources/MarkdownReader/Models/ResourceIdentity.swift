@@ -8,6 +8,8 @@ struct ResourceIdentity: Hashable, Sendable {
     enum Kind: Hashable, Sendable {
         case file
         case directory
+        /// 工作区文件（.mdworkspace），按文件身份参与路由与所有权
+        case workspace
     }
 
     let kind: Kind
