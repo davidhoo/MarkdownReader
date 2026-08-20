@@ -692,6 +692,7 @@ struct DetailView: View {
                 ),
                 fontSize: settings.sourceFontPointSize,
                 contentPadding: settings.contentPaddingPoints,
+                showLineNumbers: settings.showSourceLineNumbers,
                 scrollToSourceLineRequest: documentViewModel.scrollToSourceLineRequest,
                 fileURL: documentViewModel.currentFileURL,
                 isActive: documentViewModel.displayMode == .raw,

@@ -523,12 +523,227 @@ enum EditorSyncPolicy {
     }
 }
 
+/// Raw 编辑器左侧行号栏的固定视觉度量。
+///
+/// 宽度只取文档最大行号的位数，避免随着滚动到不同位置而改变编辑区宽度。
+enum LineNumberGutterMetrics {
+    static let horizontalPadding: CGFloat = 8
+
+    static func width(lineCount: Int, font: NSFont) -> CGFloat {
+        let largestLineNumber = String(max(lineCount, 1))
+        let labelWidth = (largestLineNumber as NSString).size(withAttributes: [.font: font]).width
+        return ceil(labelWidth + horizontalPadding * 2)
+    }
+}
+
+/// 固定在 Raw 编辑器左侧的行号 gutter。它只绘制当前视口中的逻辑源码行，
+/// 自动换行的后续 fragment 不重复编号。
+@MainActor
+private final class LineNumberGutterRenderer {
+    let layer = CALayer()
+    private weak var scrollView: NSScrollView?
+    private weak var textView: NSTextView?
+    private var labelColor: NSColor
+    private var labelFont: NSFont
+    private var gutterBackgroundColor: NSColor
+
+    init(scrollView: NSScrollView, textView: NSTextView, labelColor: NSColor, labelFont: NSFont, backgroundColor: NSColor) {
+        self.scrollView = scrollView
+        self.textView = textView
+        self.labelColor = labelColor
+        self.labelFont = labelFont
+        self.gutterBackgroundColor = backgroundColor
+        layer.contentsGravity = .resize
+        // AppKit 会将 documentView 的托管 layer 加入同一父层；显式置顶以保持 gutter 覆盖文本左侧。
+        layer.zPosition = 1
+        refresh(textView: textView, labelColor: labelColor, labelFont: labelFont, backgroundColor: backgroundColor)
+    }
+
+    func refresh(textView: NSTextView, labelColor: NSColor, labelFont: NSFont, backgroundColor: NSColor) {
+        self.textView = textView
+        self.labelColor = labelColor
+        self.labelFont = labelFont
+        self.gutterBackgroundColor = backgroundColor
+        redraw()
+    }
+
+    func redraw() {
+        let size = layer.bounds.size
+        guard size.width > 0, size.height > 0 else {
+            layer.contents = nil
+            return
+        }
+
+        let image = NSImage(size: size, flipped: true) { [weak self] rect in
+            guard let self else { return false }
+            self.gutterBackgroundColor.setFill()
+            rect.fill()
+            self.drawLineNumbers()
+            return true
+        }
+        layer.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }
+
+    private func drawLineNumbers() {
+        guard let scrollView,
+              let textView,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else { return }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let content = textView.string
+        let contentNSString = content as NSString
+        let textLength = contentNSString.length
+        guard textLength > 0 else { return }
+
+        let textContainerOrigin = textView.textContainerOrigin
+        let clipBounds = scrollView.contentView.bounds
+        let visibleContainerRect = clipBounds.offsetBy(
+            dx: -textContainerOrigin.x,
+            dy: -textContainerOrigin.y
+        )
+        let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleContainerRect, in: textContainer)
+        guard visibleGlyphRange.location != NSNotFound else { return }
+        let visibleGlyphEnd = NSMaxRange(visibleGlyphRange)
+        var glyphIndex = visibleGlyphRange.location
+
+        while glyphIndex < visibleGlyphEnd {
+            var fragmentGlyphRange = NSRange()
+            let fragmentRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: &fragmentGlyphRange)
+            guard fragmentGlyphRange.length > 0 else { break }
+
+            let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            let sourceLineRange = contentNSString.lineRange(for: NSRange(location: characterIndex, length: 0))
+            let sourceLineStartGlyph = layoutManager.glyphIndexForCharacter(at: sourceLineRange.location)
+            if glyphIndex == sourceLineStartGlyph {
+                drawLineNumber(
+                    sourceLineNumber(forCharacterOffset: sourceLineRange.location, in: content),
+                    atY: fragmentRect.minY + textContainerOrigin.y - clipBounds.minY
+                )
+            }
+            glyphIndex = NSMaxRange(fragmentGlyphRange)
+        }
+
+        let extraFragment = layoutManager.extraLineFragmentUsedRect
+        if extraFragment.height > 0,
+           visibleGlyphEnd >= layoutManager.numberOfGlyphs {
+            drawLineNumber(
+                sourceLineCount(in: content),
+                atY: extraFragment.minY + textContainerOrigin.y - clipBounds.minY
+            )
+        }
+    }
+
+    private func drawLineNumber(_ lineNumber: Int, atY y: CGFloat) {
+        let label = String(lineNumber) as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: labelFont,
+            .foregroundColor: labelColor
+        ]
+        let labelWidth = label.size(withAttributes: attributes).width
+        let x = layer.bounds.width - LineNumberGutterMetrics.horizontalPadding - labelWidth
+        label.draw(at: NSPoint(x: x, y: y), withAttributes: attributes)
+    }
+
+    private func sourceLineCount(in content: String) -> Int {
+        content.utf16.reduce(into: 1) { count, codeUnit in
+            if codeUnit == 10 { count += 1 }
+        }
+    }
+
+    private func sourceLineNumber(forCharacterOffset offset: Int, in content: String) -> Int {
+        content.utf16.prefix(offset).reduce(into: 1) { count, codeUnit in
+            if codeUnit == 10 { count += 1 }
+        }
+    }
+}
+
+/// 保持 `NSScrollView` 作为 SwiftUI 直接托管的根视图，将行号栏覆盖在其左侧。
+/// 不得改写 `contentView.frame`：AppKit 在 SwiftUI 托管下会据此决定文字绘制区域，
+/// 修改它会导致内容不绘制。编辑文本通过 text container 的内边距避开覆盖层。
+@MainActor
+final class LineNumberScrollView: NSScrollView {
+    private(set) var lineNumberGutterLayer: CALayer?
+    private var lineNumberGutterRenderer: LineNumberGutterRenderer?
+    private var gutterWidth: CGFloat = 0
+
+    func configureLineNumberGutter(
+        showLineNumbers: Bool,
+        textView: NSTextView,
+        labelColor: NSColor,
+        labelFont: NSFont,
+        backgroundColor: NSColor,
+        contentPadding: CGFloat
+    ) {
+        let gutterRenderer: LineNumberGutterRenderer
+        if let existing = lineNumberGutterRenderer {
+            gutterRenderer = existing
+        } else {
+            let created = LineNumberGutterRenderer(
+                scrollView: self,
+                textView: textView,
+                labelColor: labelColor,
+                labelFont: labelFont,
+                backgroundColor: backgroundColor
+            )
+            wantsLayer = true
+            layer?.addSublayer(created.layer)
+            lineNumberGutterLayer = created.layer
+            lineNumberGutterRenderer = created
+            gutterRenderer = created
+        }
+
+        gutterRenderer.refresh(
+            textView: textView,
+            labelColor: labelColor,
+            labelFont: labelFont,
+            backgroundColor: backgroundColor
+        )
+        gutterWidth = showLineNumbers
+            ? LineNumberGutterMetrics.width(lineCount: sourceLineCount(in: textView.string), font: labelFont)
+            : 0
+        gutterRenderer.layer.isHidden = !showLineNumbers
+        let textInset = NSSize(
+            width: contentPadding + gutterWidth,
+            height: contentPadding
+        )
+        if textView.textContainerInset != textInset {
+            textView.textContainerInset = textInset
+        }
+        tile()
+    }
+
+    override func tile() {
+        super.tile()
+
+        lineNumberGutterLayer?.frame = CGRect(
+            x: bounds.minX,
+            y: bounds.minY,
+            width: gutterWidth,
+            height: bounds.height
+        )
+        lineNumberGutterRenderer?.redraw()
+    }
+
+    override func reflectScrolledClipView(_ clipView: NSClipView) {
+        super.reflectScrolledClipView(clipView)
+        lineNumberGutterRenderer?.redraw()
+    }
+
+    private func sourceLineCount(in content: String) -> Int {
+        content.utf16.reduce(into: 1) { count, codeUnit in
+            if codeUnit == 10 { count += 1 }
+        }
+    }
+}
+
 /// 基于 NSTextView 的语法高亮编辑器
 /// 支持 Markdown 语法着色、主题色适配、滚动到指定行
 struct SyntaxHighlightedEditor: NSViewRepresentable {
     @Binding var content: String
     var fontSize: CGFloat = 13
     var contentPadding: CGFloat = 20
+    var showLineNumbers: Bool = false
     var scrollToSourceLineRequest: DocumentViewModel.SourceScrollRequest?
     var themeColors: ThemeColors
     /// 当前文件 URL，用于 per-file undo 管理
@@ -561,10 +776,10 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         Coordinator(self)
     }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> LineNumberScrollView {
         // 手动创建 NSScrollView + NSTextView
         // 不使用 NSTextView.scrollableTextView() 工厂方法，避免其自带约束与 SwiftUI 布局冲突
-        let scrollView = NSScrollView()
+        let scrollView = LineNumberScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -619,9 +834,6 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         // 组装 scrollView + textView
         scrollView.documentView = textView
 
-        // 设置边距
-        textView.textContainerInset = NSSize(width: contentPadding, height: contentPadding)
-
         // 底部留白目标高度（约一个空行）：末尾新增行时最后一行下方
         // 应保留约一行高度的空间。注意：不设置 scrollView/clipView 的
         // contentInsets — 系统在布局时会覆写该值（实测被改写），主动设置
@@ -644,6 +856,7 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         context.coordinator.scrollView = scrollView
         context.coordinator.wasActive = isActive
         context.coordinator.previousThemeColors = themeColors
+        configureLineNumberGutter(in: scrollView, textView: textView)
 
         // 监听活跃编辑器实际滚动：仅报告视口顶部源码行，不触碰选区、不调用 requestScroll。
         // 防抖 100ms，避免连续拖动滚动条产生高频回写。
@@ -686,7 +899,7 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         return scrollView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ scrollView: LineNumberScrollView, context: Context) {
         context.coordinator.refresh(parent: self)
         guard let textView = scrollView.documentView as? HighlightableTextView else { return }
 
@@ -773,13 +986,6 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
             )
         }
 
-        // 更新边距（仅在值变化时更新，避免不必要的布局计算）
-        let currentInset = textView.textContainerInset
-        let newInset = NSSize(width: contentPadding, height: contentPadding)
-        if abs(currentInset.width - newInset.width) > 0.01 || abs(currentInset.height - newInset.height) > 0.01 {
-            textView.textContainerInset = newInset
-        }
-
         // 同步底部留白目标高度（fontSize 可能通过设置变化）
         let currentFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let lineHeight = textView.layoutManager?.defaultLineHeight(for: currentFont) ?? (fontSize * 1.5)
@@ -787,6 +993,8 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
         if abs(textView.bottomOverscroll - newOverscroll) > 0.01 {
             textView.bottomOverscroll = newOverscroll
         }
+
+        configureLineNumberGutter(in: scrollView, textView: textView)
 
         // First responder 管理：切换到 Raw 模式时自动获取焦点
         // 查找面板可见时不抢占焦点，避免搜索输入框失去焦点
@@ -853,6 +1061,18 @@ struct SyntaxHighlightedEditor: NSViewRepresentable {
          }
      }
   }
+
+    private func configureLineNumberGutter(in scrollView: LineNumberScrollView, textView: NSTextView) {
+        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        scrollView.configureLineNumberGutter(
+            showLineNumbers: showLineNumbers,
+            textView: textView,
+            labelColor: themeColors.fgMuted.nsColor,
+            labelFont: font,
+            backgroundColor: themeColors.surface.nsColor,
+            contentPadding: contentPadding
+        )
+    }
 
     // MARK: - 颜色转换
 

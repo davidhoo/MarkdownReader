@@ -100,6 +100,7 @@ public enum L10n {
         case settingsAppearanceTypographyTitle
         case settingsAppearanceSourceFontSize
         case settingsAppearanceContentPadding
+        case settingsAppearanceShowSourceLineNumbers
 
         // 语言选项
         case languageAuto
@@ -348,6 +349,7 @@ public enum L10n {
         .settingsAppearanceTypographyTitle: "Typography",
         .settingsAppearanceSourceFontSize: "Source font size",
         .settingsAppearanceContentPadding: "Content padding",
+        .settingsAppearanceShowSourceLineNumbers: "Show source line numbers",
         .languageAuto: "Auto / Auto Detect",
         .languageZhCN: "Simplified Chinese",
         .languageZhTW: "Traditional Chinese",
@@ -549,6 +551,7 @@ public enum L10n {
         .settingsAppearanceTypographyTitle: "字体与排版",
         .settingsAppearanceSourceFontSize: "源码字号",
         .settingsAppearanceContentPadding: "内容边距",
+        .settingsAppearanceShowSourceLineNumbers: "显示源码行号",
         .languageAuto: "自动检测",
         .languageZhCN: "简体中文",
         .languageZhTW: "繁體中文",
@@ -750,6 +753,7 @@ public enum L10n {
         .settingsAppearanceTypographyTitle: "字體與排版",
         .settingsAppearanceSourceFontSize: "原始碼字號",
         .settingsAppearanceContentPadding: "內容邊距",
+        .settingsAppearanceShowSourceLineNumbers: "顯示原始碼行號",
         .languageAuto: "自動偵測",
         .languageZhCN: "简体中文",
         .languageZhTW: "繁體中文",

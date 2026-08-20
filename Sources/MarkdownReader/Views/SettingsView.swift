@@ -463,6 +463,11 @@ struct AppearanceSettingsView: View {
                     in: 8...40
                 )
             }
+
+            Toggle(
+                L10n.tr(.settingsAppearanceShowSourceLineNumbers, language: language),
+                isOn: $settings.showSourceLineNumbers
+            )
         }
     }
 

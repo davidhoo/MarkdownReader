@@ -14,6 +14,83 @@ import AppKit
 @MainActor
 final class SyntaxHighlightedEditorScrollTests: XCTestCase {
 
+    // MARK: - 行号栏度量与布局
+
+    func testLineNumberGutterWidthGrowsWhenDocumentReachesTwoDigits() {
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+
+        let oneDigitWidth = LineNumberGutterMetrics.width(lineCount: 9, font: font)
+        let twoDigitWidth = LineNumberGutterMetrics.width(lineCount: 10, font: font)
+
+        XCTAssertGreaterThan(twoDigitWidth, oneDigitWidth)
+    }
+
+    func testLineNumberGutterWidthIncludesHorizontalPadding() {
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let digitWidth = ("9" as NSString).size(withAttributes: [.font: font]).width
+
+        XCTAssertEqual(
+            LineNumberGutterMetrics.width(lineCount: 9, font: font),
+            ceil(digitWidth + LineNumberGutterMetrics.horizontalPadding * 2),
+            accuracy: 0.001
+        )
+    }
+
+    func testLineNumberScrollViewOverlaysGutterWithoutMovingContentView() {
+        let scrollView = LineNumberScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let textView = NSTextView()
+        scrollView.documentView = textView
+        scrollView.tile()
+        let originalContentFrame = scrollView.contentView.frame
+
+        scrollView.configureLineNumberGutter(
+            showLineNumbers: true,
+            textView: textView,
+            labelColor: .secondaryLabelColor,
+            labelFont: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            backgroundColor: .textBackgroundColor,
+            contentPadding: 20
+        )
+        scrollView.tile()
+
+        let gutterWidth = LineNumberGutterMetrics.width(lineCount: 1, font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+        XCTAssertTrue(scrollView.documentView === textView)
+        XCTAssertEqual(scrollView.contentView.frame, originalContentFrame)
+        XCTAssertEqual(scrollView.lineNumberGutterLayer?.frame, CGRect(x: 0, y: 0, width: gutterWidth, height: 240))
+        XCTAssertEqual(textView.textContainerInset, NSSize(width: 20 + gutterWidth, height: 20))
+    }
+
+    func testLineNumberScrollViewHidesOverlayGutterWithoutMovingContentView() {
+        let scrollView = LineNumberScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let textView = NSTextView()
+        scrollView.documentView = textView
+        scrollView.tile()
+        let originalContentFrame = scrollView.contentView.frame
+
+        scrollView.configureLineNumberGutter(
+            showLineNumbers: true,
+            textView: textView,
+            labelColor: .secondaryLabelColor,
+            labelFont: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            backgroundColor: .textBackgroundColor,
+            contentPadding: 20
+        )
+        scrollView.configureLineNumberGutter(
+            showLineNumbers: false,
+            textView: textView,
+            labelColor: .secondaryLabelColor,
+            labelFont: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            backgroundColor: .textBackgroundColor,
+            contentPadding: 20
+        )
+        scrollView.tile()
+
+        XCTAssertEqual(scrollView.contentView.frame, originalContentFrame)
+        XCTAssertEqual(scrollView.lineNumberGutterLayer?.frame.width, 0)
+        XCTAssertEqual(scrollView.lineNumberGutterLayer?.isHidden, true)
+        XCTAssertEqual(textView.textContainerInset, NSSize(width: 20, height: 20))
+    }
+
     // MARK: - 纯几何：SourceLineNavigationGeometry.origin
 
     /// 大纲顶部落点：目标行 500、12pt 边距 → origin = 488。

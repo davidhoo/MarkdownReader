@@ -51,6 +51,7 @@ final class SettingsModel {
         static let appearanceMode       = "com.markdownreader.appearanceMode"
         static let sourceFontSize       = "com.markdownreader.sourceFontSize"
         static let contentPadding       = "com.markdownreader.contentPadding"
+        static let showSourceLineNumbers = "com.markdownreader.showSourceLineNumbers"
         static let languagePref         = SharedPreferenceKey.languagePref
         static let themeId              = "com.markdownreader.themeId"
         static let themeCustomOverrides = "com.markdownreader.themeCustomOverrides"
@@ -183,6 +184,11 @@ final class SettingsModel {
     /// 渲染视图内容边距（pt）
     var contentPadding: Int {
         didSet { defaults.set(contentPadding, forKey: Keys.contentPadding) }
+    }
+
+    /// 在 Raw 编辑器左侧显示源码行号。默认关闭，避免改变现有阅读布局。
+    var showSourceLineNumbers: Bool {
+        didSet { defaults.set(showSourceLineNumbers, forKey: Keys.showSourceLineNumbers) }
     }
 
     // MARK: - 上次位置记忆
@@ -421,6 +427,7 @@ final class SettingsModel {
         }
         self.sourceFontSize = defaults.object(forKey: Keys.sourceFontSize) as? Int ?? 13
         self.contentPadding = defaults.object(forKey: Keys.contentPadding) as? Int ?? 20
+        self.showSourceLineNumbers = defaults.object(forKey: Keys.showSourceLineNumbers) as? Bool ?? false
         // NSApp 在应用启动极早期可能尚未初始化（如通过 UpdateViewModel → SettingsModel.shared 触发时），
         // 使用可选链安全访问，不可用时默认为 false（浅色）
         self.systemIsDark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
