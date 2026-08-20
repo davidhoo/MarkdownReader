@@ -29,7 +29,7 @@ Markdown Reader 就是為這個場景而生：
 
 | 功能 | 說明 |
 |------|------|
-| WKWebView 渲染引擎 | cmark-gfm + WKWebView 渲染，完整 GFM 擴展語法 |
+| WebPage 渲染引擎 | cmark-gfm + WebPage（macOS 26 原生）渲染，完整 GFM 擴展語法 |
 | Mermaid 圖表 | 流程圖、時序圖、甘特圖等 Mermaid 圖表本機渲染 |
 | PlantUML 圖表 | 支援 PlantUML 語法，自動渲染為 SVG 圖表（需要網路） |
 | 數學公式 | KaTeX 渲染 LaTeX 行內和區塊公式 |

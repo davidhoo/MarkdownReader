@@ -29,7 +29,7 @@ When you don't need writing, collaboration, or fancy features — just want to *
 
 | Feature | Description |
 |---------|-------------|
-| WKWebView rendering | cmark-gfm + WKWebView rendering, full GFM extension support |
+| WebPage rendering | cmark-gfm + WebPage (native macOS 26) rendering, full GFM extension support |
 | Mermaid diagrams | Flowcharts, sequence diagrams, Gantt charts — rendered locally |
 | PlantUML diagrams | PlantUML syntax support, auto-renders as SVG (requires network) |
 | Math formulas | KaTeX renders LaTeX inline and block formulas |

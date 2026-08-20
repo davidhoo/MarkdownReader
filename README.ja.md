@@ -29,7 +29,7 @@ Markdown Reader はまさにそのために作られました：
 
 | 機能 | 説明 |
 |------|------|
-| WKWebView レンダリング | cmark-gfm + WKWebView レンダリング、完全な GFM 拡張構文サポート |
+| WebPage レンダリング | cmark-gfm + WebPage（macOS 26 ネイティブ）レンダリング、完全な GFM 拡張構文サポート |
 | Mermaid 図表 | フローチャート、シーケンス図、ガントチャート等のローカルレンダリング |
 | PlantUML 図表 | PlantUML 構文サポート、SVG として自動レンダリング（ネットワーク必要） |
 | 数式 | KaTeX による LaTeX インライン・ブロック数式レンダリング |
