@@ -22,7 +22,7 @@ default_lang: zh-CN
 # MarkdownReader 应用信息
 app:
   name: Markdown Reader
-  version: "2.4.1"
+  version: "2.4.2"
   macos_version: "26"
   download_url: "https://github.com/davidhoo/MarkdownReader/releases/latest"
   repo_url: "https://github.com/davidhoo/MarkdownReader"
