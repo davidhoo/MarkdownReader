@@ -208,4 +208,20 @@ final class RecentItemsTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(item.submenu?.items.count, 1)
         XCTAssertFalse(item.submenu?.items.first?.isEnabled ?? true)
     }
+
+    func testRecentDocumentsMenuServiceDoesNotRepopulateAttachedMenu() throws {
+        let (settings, _) = makeSettings()
+        let service = RecentDocumentsMenuService(settings: settings)
+        let submenu = NSMenu(title: "Open Recent")
+        let item = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        item.submenu = submenu
+
+        service.ensureSubmenu(for: item)
+        let initialItems = submenu.items
+
+        service.ensureSubmenu(for: item)
+
+        XCTAssertEqual(submenu.items.count, initialItems.count)
+        XCTAssertTrue(zip(submenu.items, initialItems).allSatisfy { $0.0 === $0.1 })
+    }
 }

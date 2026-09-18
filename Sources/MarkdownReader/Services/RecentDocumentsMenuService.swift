@@ -58,17 +58,27 @@ final class RecentDocumentsMenuService: NSObject, NSMenuDelegate {
     func ensureSubmenu(for item: NSMenuItem) {
         let language = settings.languagePref.resolvedLanguage
         let title = L10n.tr(.openRecent, language: language)
+        var needsInitialPopulation = false
 
-        item.title = title
+        if item.title != title {
+            item.title = title
+        }
         if item.submenu == nil {
             item.submenu = NSMenu(title: title)
+            needsInitialPopulation = true
         }
         if let submenu = item.submenu {
+            if submenu.title != title {
+                submenu.title = title
+            }
             if submenu.delegate !== self {
                 submenu.delegate = self
                 attachedSubmenu = submenu
+                needsInitialPopulation = true
             }
-            populateMenu(submenu)
+            if needsInitialPopulation {
+                populateMenu(submenu)
+            }
         }
     }
 
