@@ -46,6 +46,7 @@ echo "🔨 构建 ${APP_NAME} (${CONFIG}, ${ARCH})..."
 swift build -c "$CONFIG" --arch arm64
 
 BUILD_DIR="$(swift build -c "$CONFIG" --arch arm64 --show-bin-path)"
+OBJECT_DIR="${PROJECT_DIR}/.build/${ARCH}-apple-macosx/${CONFIG}"
 
 # 修补 SPM 生成的 resource_bundle_accessor.swift
 # SPM 使用 Bundle.main.bundleURL 查找 bundle，但 macOS .app 的资源在 Contents/Resources/
@@ -57,7 +58,7 @@ while IFS= read -r accessor; do
         PATCHED=$((PATCHED + 1))
         echo "📝 修补 Bundle.module 路径: $accessor"
     fi
-done < <(find "${PROJECT_DIR}/.build" -name "resource_bundle_accessor.swift" -type f 2>/dev/null)
+done < <(find "${OBJECT_DIR}" -name "resource_bundle_accessor.swift" -type f 2>/dev/null)
 
 if [[ "$PATCHED" -gt 0 ]]; then
     echo "🔨 重新编译（应用 Bundle.module 修补）..."
@@ -184,15 +185,15 @@ mkdir -p "${QL_APPEX}/Contents/Resources"
 CLANG=$(xcrun -f clang)
 SDK=$(xcrun --show-sdk-path)
 
-QL_OBJECTS="${BUILD_DIR}/${QL_EXT_NAME}.build"
-KIT_OBJECTS="${BUILD_DIR}/MarkdownReaderKit.build"
+QL_OBJECTS="${OBJECT_DIR}/${QL_EXT_NAME}.build"
+KIT_OBJECTS="${OBJECT_DIR}/MarkdownReaderKit.build"
 
 # 收集所有依赖的 .o 文件（cmark_gfm, cmark_gfm_extensions, CAtomic, Markdown）
 DEP_OBJS=()
-for dep_dir in "${BUILD_DIR}/cmark_gfm.build" \
-               "${BUILD_DIR}/cmark_gfm_extensions.build" \
-               "${BUILD_DIR}/CAtomic.build" \
-               "${BUILD_DIR}/Markdown.build"; do
+for dep_dir in "${OBJECT_DIR}/cmark_gfm.build" \
+               "${OBJECT_DIR}/cmark_gfm_extensions.build" \
+               "${OBJECT_DIR}/CAtomic.build" \
+               "${OBJECT_DIR}/Markdown.build"; do
     if [ -d "$dep_dir" ]; then
         for obj in "$dep_dir"/*.o; do
             [ -f "$obj" ] && DEP_OBJS+=("$obj")
