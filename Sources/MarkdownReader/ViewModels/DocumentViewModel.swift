@@ -334,6 +334,11 @@ final class DocumentViewModel {
             } else {
                 displayMode = displayModeCache[url] ?? settings.defaultDisplayMode
             }
+
+            let untitledDir = Self.untitledDirectory.standardizedFileURL.path
+            if !url.standardizedFileURL.path.hasPrefix(untitledDir + "/") {
+                settings.addRecentItem(url: url, isDirectory: false)
+            }
         } catch let fileError as FileError {
             self.fileError = fileError
             content = ""

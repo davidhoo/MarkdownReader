@@ -140,4 +140,54 @@ final class RecentItemsTests: TemporaryDirectoryTestCase {
         XCTAssertNotNil(session.fileTreeViewModel.errorMessage)
         XCTAssertTrue(settings.recentItems.isEmpty)
     }
+
+    func testDocumentViewModelLoadFileRecordsRecentItem() async throws {
+        let file = try makeFile(named: "guide.md", content: "# Guide")
+        let (settings, _) = makeSettings()
+        let docVM = DocumentViewModel(settings: settings)
+
+        await docVM.loadFile(at: file)
+
+        XCTAssertEqual(settings.recentItems.map(\.url), [file.standardizedFileURL])
+        XCTAssertEqual(docVM.currentFileURL?.standardizedFileURL, file.standardizedFileURL)
+    }
+
+    func testDocumentViewModelLoadFileDoesNotRecordUntitledTempFile() async throws {
+        let (settings, _) = makeSettings()
+        let docVM = DocumentViewModel(settings: settings)
+        let tempDir = DocumentViewModel.untitledDirectory
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let tempFile = tempDir.appendingPathComponent("Untitled.md")
+        try "# Untitled".write(to: tempFile, atomically: true, encoding: .utf8)
+
+        await docVM.loadFile(at: tempFile)
+
+        XCTAssertTrue(settings.recentItems.isEmpty)
+    }
+
+    func testRecentDocumentsMenuServicePopulatesMenu() throws {
+        let (settings, _) = makeSettings()
+        let menu = NSMenu(title: "Open Recent")
+        let service = RecentDocumentsMenuService(settings: settings)
+
+        // 1. Empty state
+        service.populateMenu(menu)
+        XCTAssertEqual(menu.items.count, 1)
+        XCTAssertFalse(menu.items[0].isEnabled)
+
+        // 2. Add an item
+        let file = try makeFile(named: "note.md", content: "# Note")
+        settings.addRecentItem(url: file, isDirectory: false)
+        service.populateMenu(menu)
+
+        XCTAssertTrue(menu.items.contains { $0.title == file.standardizedFileURL.path })
+        guard let clearItem = menu.items.first(where: { $0.action == #selector(RecentDocumentsMenuService.handleClearRecentItems(_:)) }) else {
+            XCTFail("Missing clear recent items item")
+            return
+        }
+
+        // 3. Trigger clear action
+        service.handleClearRecentItems(clearItem)
+        XCTAssertTrue(settings.recentItems.isEmpty)
+    }
 }

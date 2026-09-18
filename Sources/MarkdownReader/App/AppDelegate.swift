@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainMenuLocalizationService.start(
             language: SettingsModel.shared.languagePref.resolvedLanguage
         )
+        RecentDocumentsMenuService.start()
 
         // 注册窗口拖拽：Task 11 起由 WindowLifecycleBridge 在每窗口挂载时安装
         // 窗口级 WindowDropOverlayView，不再由 AppDelegate 全局安装。
