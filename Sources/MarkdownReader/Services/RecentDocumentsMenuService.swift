@@ -46,15 +46,29 @@ final class RecentDocumentsMenuService: NSObject, NSMenuDelegate {
         guard let mainMenu = NSApp.mainMenu else { return }
         for menu in mainMenu.items.compactMap(\.submenu) {
             for item in menu.items {
-                if let submenu = item.submenu, isRecentMenu(item: item) {
-                    if submenu.delegate !== self {
-                        submenu.delegate = self
-                        self.attachedSubmenu = submenu
-                        populateMenu(submenu)
-                    }
+                if isRecentMenu(item: item) {
+                    ensureSubmenu(for: item)
                     return
                 }
             }
+        }
+    }
+
+    /// 为扁平化的「打开最近使用」菜单项补建子菜单。
+    func ensureSubmenu(for item: NSMenuItem) {
+        let language = settings.languagePref.resolvedLanguage
+        let title = L10n.tr(.openRecent, language: language)
+
+        item.title = title
+        if item.submenu == nil {
+            item.submenu = NSMenu(title: title)
+        }
+        if let submenu = item.submenu {
+            if submenu.delegate !== self {
+                submenu.delegate = self
+                attachedSubmenu = submenu
+            }
+            populateMenu(submenu)
         }
     }
 

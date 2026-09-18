@@ -1,4 +1,5 @@
 import XCTest
+import MarkdownReaderKit
 @testable import MarkdownReader
 
 @MainActor
@@ -189,5 +190,22 @@ final class RecentItemsTests: TemporaryDirectoryTestCase {
         // 3. Trigger clear action
         service.handleClearRecentItems(clearItem)
         XCTAssertTrue(settings.recentItems.isEmpty)
+    }
+
+    func testRecentDocumentsMenuServiceRepairsFlattenedMenuItem() throws {
+        let (settings, _) = makeSettings()
+        let service = RecentDocumentsMenuService(settings: settings)
+        let item = NSMenuItem(
+            title: L10n.tr(.openRecentEmpty, language: settings.languagePref.resolvedLanguage),
+            action: nil,
+            keyEquivalent: ""
+        )
+
+        service.ensureSubmenu(for: item)
+
+        XCTAssertEqual(item.title, L10n.tr(.openRecent, language: settings.languagePref.resolvedLanguage))
+        XCTAssertNotNil(item.submenu)
+        XCTAssertEqual(item.submenu?.items.count, 1)
+        XCTAssertFalse(item.submenu?.items.first?.isEnabled ?? true)
     }
 }

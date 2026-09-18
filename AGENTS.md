@@ -92,7 +92,7 @@ Sources/
     └── MarkdownQLPreviewProvider.swift   # WKWebView + WKURLSchemeHandler（扩展兼容）
 
 Tests/
-└── MarkdownReaderTests/           # XCTest（~288），多窗口路由 / 渲染调度 / 源码锚点等
+└── MarkdownReaderTests/           # XCTest（~289），多窗口路由 / 渲染调度 / 源码锚点等
 ```
 
 ## 构建与运行

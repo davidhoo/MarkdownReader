@@ -11,7 +11,7 @@
 
 ## ✅ 测试
 
-- `swift test` 全部 288 个测试通过
+- `swift test` 全部 289 个测试通过
 - `git diff --check` 无空白错误
 
 ## 🖥️ 系统要求
