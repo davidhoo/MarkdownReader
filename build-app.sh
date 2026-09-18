@@ -45,7 +45,7 @@ echo "🔨 构建 ${APP_NAME} (${CONFIG}, ${ARCH})..."
 
 swift build -c "$CONFIG" --arch arm64
 
-BUILD_DIR="${PROJECT_DIR}/.build/${ARCH}-apple-macosx/${CONFIG}"
+BUILD_DIR="$(swift build -c "$CONFIG" --arch arm64 --show-bin-path)"
 
 # 修补 SPM 生成的 resource_bundle_accessor.swift
 # SPM 使用 Bundle.main.bundleURL 查找 bundle，但 macOS .app 的资源在 Contents/Resources/
@@ -57,7 +57,7 @@ while IFS= read -r accessor; do
         PATCHED=$((PATCHED + 1))
         echo "📝 修补 Bundle.module 路径: $accessor"
     fi
-done < <(find "${BUILD_DIR}" -name "resource_bundle_accessor.swift" -type f)
+done < <(find "${PROJECT_DIR}/.build" -name "resource_bundle_accessor.swift" -type f 2>/dev/null)
 
 if [[ "$PATCHED" -gt 0 ]]; then
     echo "🔨 重新编译（应用 Bundle.module 修补）..."
