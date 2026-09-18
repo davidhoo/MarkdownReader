@@ -21,6 +21,8 @@ final class WindowSession {
     let documentViewModel: DocumentViewModel
     let commandPaletteViewModel: CommandPaletteViewModel
 
+    private let settings: SettingsModel
+
    /// 命令目标：菜单命令经 FocusedValues 路由到此（Task 7）。
    /// 由 session 持有，弱引用自身，session 释放后自动 no-op。
    let commandTarget: WindowCommandTarget
@@ -84,6 +86,7 @@ final class WindowSession {
         coordinator: WindowCoordinator? = nil
     ) {
         self.id = id
+        self.settings = settings
         self.appViewModel = AppViewModel()
         self.fileTreeViewModel = FileTreeViewModel(settings: settings)
         self.documentViewModel = DocumentViewModel(settings: settings)
@@ -137,6 +140,10 @@ final class WindowSession {
         appViewModel.openSingleFile(url)
         fileTreeViewModel.selectedFileURL = url
         await documentViewModel.loadFile(at: url)
+        guard documentViewModel.fileError == nil else { return }
+
+        recordLastOpened(file: url.standardizedFileURL, directory: nil)
+        settings.addRecentItem(url: url, isDirectory: false)
     }
 
     /// 在本会话内以目录模式打开。
@@ -145,6 +152,10 @@ final class WindowSession {
     func openDirectory(_ url: URL) async {
         appViewModel.openDirectory(url)
         await fileTreeViewModel.loadDirectory(url)
+        guard fileTreeViewModel.errorMessage == nil else { return }
+
+        recordLastOpened(file: nil, directory: url.standardizedFileURL)
+        settings.addRecentItem(url: url, isDirectory: true)
     }
 
     // MARK: - 目录树选择前路由
@@ -157,7 +168,6 @@ final class WindowSession {
 
     /// Task 13：记录最后打开位置（仅最后活动窗口写入）。
     func recordLastOpened(file: URL?, directory: URL?) {
-        let settings = SettingsModel.shared
         settings.recordLastOpened(file: file, directory: directory, isActive: isLastActiveWindow)
     }
 

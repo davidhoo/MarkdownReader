@@ -15,6 +15,9 @@ struct MarkdownReaderApp: App {
     /// Task 8：AppDelegate 和 App 共享同一 Coordinator 实例。
     @State private var windowCoordinator = AppDelegate.coordinator
 
+    /// 菜单读取的设置实例；@State 保证 Observation 变化能驱动菜单刷新。
+    @State private var settings = SettingsModel.shared
+
     init() {
         DispatchQueue.main.async {
             NSApp.setActivationPolicy(.regular)
@@ -24,47 +27,47 @@ struct MarkdownReaderApp: App {
 
     /// 当前界面语言（从共享 SettingsModel 读取，用于菜单等非视图场景）
     private var language: Language {
-        SettingsModel.shared.languagePref.resolvedLanguage
+        settings.languagePref.resolvedLanguage
     }
 
     /// 最近打开记录（从 SettingsModel 读取，用于菜单动态生成）
     private var recentItems: [RecentItem] {
-        SettingsModel.shared.recentItems
+        settings.recentItems
     }
 
     /// 打开最近的子菜单（文件在上、目录在下，不显示分区标题）
     @ViewBuilder
     private var openRecentMenu: some View {
-        if recentItems.isEmpty {
-            Text(L10n.tr(.openRecentEmpty, language: language))
-                .disabled(true)
-        } else {
-            Menu(L10n.tr(.openRecent, language: language)) {
+        Menu(L10n.tr(.openRecent, language: language)) {
+            if recentItems.isEmpty {
+                Text(L10n.tr(.openRecentEmpty, language: language))
+                    .disabled(true)
+            } else {
                 let files = recentItems.filter { !$0.isDirectory }
                 let folders = recentItems.filter { $0.isDirectory }
 
                 // 文件列表
-               ForEach(files) { item in
-                   Button {
+                ForEach(files) { item in
+                    Button {
                         windowCoordinator.enqueue(OpenRequest(url: item.url, source: .openRecent))
-                   } label: {
-                       HStack {
-                           Image(systemName: "doc.text")
-                           Text(item.displayName)
-                       }
-                   }
-               }
+                    } label: {
+                        HStack {
+                            Image(systemName: "doc.text")
+                            Text(item.displayName)
+                        }
+                    }
+                }
 
-               // 分隔线（文件和目录都有时显示）
-               if !files.isEmpty && !folders.isEmpty {
-                   Divider()
-               }
+                // 分隔线（文件和目录都有时显示）
+                if !files.isEmpty && !folders.isEmpty {
+                    Divider()
+                }
 
-               // 目录列表
-               ForEach(folders) { item in
-                   Button {
+                // 目录列表
+                ForEach(folders) { item in
+                    Button {
                         windowCoordinator.enqueue(OpenRequest(url: item.url, source: .openRecent))
-                   } label: {
+                    } label: {
                         HStack {
                             Image(systemName: "folder")
                             Text(item.displayName)
@@ -75,7 +78,7 @@ struct MarkdownReaderApp: App {
                 Divider()
 
                 Button(L10n.tr(.clearRecentItems, language: language)) {
-                    SettingsModel.shared.clearRecentItems()
+                    settings.clearRecentItems()
                 }
             }
         }
@@ -220,4 +223,3 @@ extension Notification.Name {
     /// 应用级：检查更新（菜单触发，UpdateViewModel 监听）。
     static let checkForUpdates = Notification.Name("com.markdownreader.checkForUpdates")
 }
-

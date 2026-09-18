@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MarkdownReaderKit
 import UniformTypeIdentifiers
 
@@ -24,7 +25,8 @@ struct RecentItem: Codable, Identifiable, Equatable {
     }
 
     static func == (lhs: RecentItem, rhs: RecentItem) -> Bool {
-        lhs.url == rhs.url
+        lhs.url.standardizedFileURL.path == rhs.url.standardizedFileURL.path
+            && lhs.isDirectory == rhs.isDirectory
     }
 }
 
@@ -69,7 +71,11 @@ final class SettingsModel {
         static let quickLookDocumentCopyFormat = SharedPreferenceKey.quickLookDocumentCopyFormat
     }
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+
+    /// 同步 macOS 系统级最近项；测试注入 no-op，避免污染真实系统状态。
+    private let noteRecentDocument: (URL) -> Void
+    private let clearSystemRecentDocuments: () -> Void
 
     // MARK: - 通用设置
 
@@ -239,25 +245,37 @@ final class SettingsModel {
 
     /// 添加一条最近打开记录，自动去重、按时间倒序排列、限制最多 10 条
     func addRecentItem(url: URL, isDirectory: Bool) {
-        // 验证路径是否仍然存在
+        let standardizedURL = URL(
+            fileURLWithPath: url.standardizedFileURL.path,
+            isDirectory: isDirectory
+        )
         var isDir: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-        guard exists else { return }
+        guard FileManager.default.fileExists(
+            atPath: standardizedURL.path,
+            isDirectory: &isDir
+        ), isDir.boolValue == isDirectory else { return }
 
-        let item = RecentItem(url: url, isDirectory: isDirectory)
+        let item = RecentItem(url: standardizedURL, isDirectory: isDirectory)
         // 去重：移除相同 URL 的旧记录
-        recentItems.removeAll { $0.url == url }
+        let existingCount = recentItems.count
+        recentItems.removeAll { $0.url.path == standardizedURL.path }
+        let replacedExisting = recentItems.count < existingCount
         // 插入到最前面
         recentItems.insert(item, at: 0)
         // 限制最多 10 条
         if recentItems.count > 10 {
             recentItems = Array(recentItems.prefix(10))
         }
+
+        if !replacedExisting {
+            noteRecentDocument(standardizedURL)
+        }
     }
 
     /// 清除所有最近打开记录
     func clearRecentItems() {
         recentItems = []
+        clearSystemRecentDocuments()
     }
 
     // MARK: - 计算属性
@@ -384,8 +402,18 @@ final class SettingsModel {
 
     // MARK: - 初始化（从 UserDefaults 恢复）
 
-    init() {
-        let defaults = UserDefaults.standard
+    init(
+        defaults: UserDefaults = .standard,
+        noteRecentDocument: ((URL) -> Void)? = nil,
+        clearSystemRecentDocuments: (() -> Void)? = nil
+    ) {
+        self.defaults = defaults
+        self.noteRecentDocument = noteRecentDocument ?? { url in
+            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        }
+        self.clearSystemRecentDocuments = clearSystemRecentDocuments ?? {
+            NSDocumentController.shared.clearRecentDocuments(nil)
+        }
 
         self.defaultDisplayMode = DisplayMode(rawValue: defaults.string(forKey: Keys.defaultDisplayMode) ?? "") ?? .rendered
         self.languagePref = LanguagePref(rawValue: defaults.string(forKey: Keys.languagePref) ?? "") ?? .auto
