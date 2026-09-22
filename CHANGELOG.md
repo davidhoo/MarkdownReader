@@ -14,6 +14,17 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.4.7] - 2026-09-22
+
+### 修复
+
+- **v2.4.6 发布包混入旧主程序 (P0)**：修复打包命令重复传入 `--target`，仅编译 Quick Look 而将历史主程序配上新资源和版本号发布的问题。主产品与扩展分别构建，每次打包使用独立 `--scratch-path`；扩展仅链接本次 SwiftPM 输出，不再借用历史 native 对象文件，并明确以 macOS 26 为最低部署版本。`build-app.sh` 支持 `--version`，`release-local.sh` 在打 tag 前也会显式写入目标版本，避免 Info.plist 仍沿用旧 git tag。
+- **发布门禁改为真实主程序自检**：验收改为 `open -n` 启动 `.app` 内主程序的 `--verify-packaged-render` 入口，验证实际链接的 HTML 生成、资源定位、CSS、正文替换和滚动代码。自检在 SwiftUI App / 用户设置 / 文档初始化前分流；旧主程序、资源缺失和运行时损坏均阻断验收。
+
+### 测试
+
+- 全部单元测试通过。新增 `scripts/test-packaged-app.py` 集成回归：正常包、最低系统版本、旧程序配新资源、缺 CSS、损坏 CSS/JS；并支持 `--output` 到临时目录验收，不覆盖已安装应用。
+
 ## [2.4.6] - 2026-09-22
 
 ### 修复
