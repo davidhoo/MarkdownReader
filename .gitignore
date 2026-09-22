@@ -50,6 +50,7 @@ Carthage/Build/
 # Build artifacts
 docs/plan.html
 scripts/.seticon-bin
+scripts/.verify-render-resources-bin
 *.icns
 *.zip
 

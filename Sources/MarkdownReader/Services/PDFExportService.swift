@@ -227,10 +227,12 @@ enum PDFExportService {
 private final class MRURLSchemeHandler: NSObject, WKURLSchemeHandler {
     let baseURL: URL?
     let resourceSearchPaths: [URL]?
+    let hostBundle: Bundle
 
-    init(baseURL: URL?, resourceSearchPaths: [URL]? = nil) {
+    init(baseURL: URL?, resourceSearchPaths: [URL]? = nil, hostBundle: Bundle = .main) {
         self.baseURL = baseURL
         self.resourceSearchPaths = resourceSearchPaths
+        self.hostBundle = hostBundle
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
@@ -245,7 +247,12 @@ private final class MRURLSchemeHandler: NSObject, WKURLSchemeHandler {
             path = String(path.dropFirst())
         }
 
-        let resourceURL = resolveResourceURL(path: path)
+        let resourceURL = MarkdownResourceLocator.resolveResourceURL(
+            path: path,
+            baseURL: baseURL,
+            resourceSearchPaths: resourceSearchPaths,
+            hostBundle: hostBundle
+        )
 
         guard let resourceURL, FileManager.default.fileExists(atPath: resourceURL.path) else {
             let response = HTTPURLResponse(
@@ -255,13 +262,13 @@ private final class MRURLSchemeHandler: NSObject, WKURLSchemeHandler {
                 headerFields: nil
             )!
             urlSchemeTask.didReceive(response)
+            urlSchemeTask.didReceive(Data())
             urlSchemeTask.didFinish()
             return
         }
 
         do {
-            let data = try Data(contentsOf: resourceURL)
-            let mimeType = Self.mimeType(for: resourceURL.pathExtension)
+            let (data, mimeType) = try MarkdownResourceLocator.loadResourceData(at: resourceURL)
             let response = HTTPURLResponse(
                 url: url,
                 statusCode: 200,
@@ -277,54 +284,4 @@ private final class MRURLSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
-
-    private func resolveResourceURL(path: String) -> URL? {
-        let absoluteURL = URL(fileURLWithPath: "/" + path)
-        if FileManager.default.fileExists(atPath: absoluteURL.path) {
-            return absoluteURL
-        }
-
-        if let baseURL, FileManager.default.fileExists(atPath: baseURL.appendingPathComponent(path).path) {
-            return baseURL.appendingPathComponent(path)
-        }
-
-        var searchPaths: [URL] = []
-
-        if let customPaths = resourceSearchPaths {
-            searchPaths = customPaths.map { $0.appendingPathComponent(path) }
-        } else {
-            searchPaths = [
-                Bundle.main.resourceURL?.appendingPathComponent("MarkdownReader_MarkdownReader.bundle").appendingPathComponent("Resources").appendingPathComponent(path),
-                Bundle.main.resourceURL?.appendingPathComponent("Resources").appendingPathComponent(path),
-                Bundle.main.resourceURL?.appendingPathComponent(path),
-            ].compactMap { $0 }
-        }
-
-        for url in searchPaths {
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
-        }
-
-        return nil
-    }
-
-    private static func mimeType(for pathExtension: String) -> String {
-        switch pathExtension.lowercased() {
-        case "css": return "text/css"
-        case "js": return "application/javascript"
-        case "html", "htm": return "text/html"
-        case "png": return "image/png"
-        case "jpg", "jpeg": return "image/jpeg"
-        case "gif": return "image/gif"
-        case "svg": return "image/svg+xml"
-        case "webp": return "image/webp"
-        case "ico": return "image/x-icon"
-        case "woff": return "font/woff"
-        case "woff2": return "font/woff2"
-        case "ttf": return "font/ttf"
-        case "json": return "application/json"
-        default: return "application/octet-stream"
-        }
-    }
 }

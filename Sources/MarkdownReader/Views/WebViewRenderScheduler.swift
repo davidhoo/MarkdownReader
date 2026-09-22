@@ -114,15 +114,23 @@ enum WebViewRuntimePolicy {
 /// 4. `cancel()`：Rendered → Raw 或 DetailView 消失时清理。
 struct RenderedModeTransitionState: Equatable {
    private(set) var targetGeneration: UInt?
+   private(set) var targetTransferId: UUID?
    private(set) var keepsRawVisible = false
    private(set) var transferAcknowledged = false
 
-   /// 开始一次 Raw → Rendered 过渡：Raw 保持可见，等待真实目标世代。
-   mutating func begin() {
-       targetGeneration = nil
-       keepsRawVisible = true
-       transferAcknowledged = false
-   }
+    /// 开始一次 Raw → Rendered 过渡：Raw 保持可见，等待真实目标世代与交接 ID。
+    mutating func begin(generation: UInt? = nil, transferId: UUID? = nil) {
+        targetGeneration = generation
+        targetTransferId = transferId
+        keepsRawVisible = true
+        transferAcknowledged = false
+    }
+
+    /// 记录关联的滚动交接 ID
+    mutating func setTargetTransferId(_ id: UUID?) {
+        guard keepsRawVisible else { return }
+        targetTransferId = id
+    }
 
     /// 记录 WebView 实际请求的渲染世代。新世代覆盖旧 target，使旧世代的完成回调失效。
     mutating func track(generation: UInt) {
@@ -131,36 +139,110 @@ struct RenderedModeTransitionState: Equatable {
     }
 
     /// 仅当传入世代匹配当前目标世代时结束过渡；否则保持不变。
-   @discardableResult
-   mutating func completeIfMatching(generation: UInt) -> Bool {
-       guard keepsRawVisible, let target = targetGeneration, generation == target else {
-           return false
-       }
-       targetGeneration = nil
-       checkAndComplete()
-       return !keepsRawVisible
-   }
+    @discardableResult
+    mutating func completeIfMatching(generation: UInt) -> Bool {
+        guard keepsRawVisible, let target = targetGeneration, generation == target else {
+            return false
+        }
+        targetGeneration = nil
+        checkAndComplete()
+        return !keepsRawVisible
+    }
 
-   /// 记录 ScrollTransfer 回执。仅当世代已完成且 transfer 已回执时才结束过渡。
-   mutating func acknowledgeTransfer() {
-       guard keepsRawVisible else { return }
-       transferAcknowledged = true
-       checkAndComplete()
-   }
+    /// 记录 ScrollTransfer 回执。若提供了 id，仅当匹配目标交接 ID 时才记录。
+    mutating func acknowledgeTransfer(id: UUID? = nil) {
+        guard keepsRawVisible else { return }
+        if let id, let targetId = targetTransferId, id != targetId {
+            return
+        }
+        transferAcknowledged = true
+        checkAndComplete()
+    }
 
-   private mutating func checkAndComplete() {
-       if targetGeneration == nil && transferAcknowledged {
-           keepsRawVisible = false
-           transferAcknowledged = false
-       }
-   }
+    private mutating func checkAndComplete() {
+        if targetGeneration == nil && transferAcknowledged {
+            keepsRawVisible = false
+            transferAcknowledged = false
+            targetTransferId = nil
+        }
+    }
 
     /// 取消过渡：Rendered → Raw 或视图消失。
-   mutating func cancel() {
-       targetGeneration = nil
-       keepsRawVisible = false
-       transferAcknowledged = false
-   }
+    mutating func cancel() {
+        targetGeneration = nil
+        targetTransferId = nil
+        keepsRawVisible = false
+        transferAcknowledged = false
+    }
+
+    /// 当目标世代渲染失败时调用：若世代匹配当前 targetGeneration 且处于过渡期，重置过渡并返回 true
+    @discardableResult
+    mutating func failIfMatching(generation: UInt) -> Bool {
+        guard keepsRawVisible, let target = targetGeneration, generation == target else {
+            return false
+        }
+        cancel()
+        return true
+    }
+
+    /// 当滚动交接失败或超时时调用。只有已经绑定、且与该 id 相同的交接才能结束过渡。
+    /// 尚未绑上交接 ID 时一律忽略：新一轮 `begin()` 会先清空 ID，这段窗口里迟到的旧失败不能拆掉当前切换。
+    @discardableResult
+    mutating func failTransferIfMatching(id: UUID) -> Bool {
+        guard keepsRawVisible, targetTransferId == id else { return false }
+        cancel()
+        return true
+    }
+}
+
+// MARK: - 渲染就绪策略
+
+public enum WebViewRenderReadinessPolicy {
+    public static let checkScript: String = """
+    (() => {
+        if (typeof window.MR !== "object" || window.MR === null) {
+            return { ready: false, reason: "missing_mr" };
+        }
+        if (typeof window.MR.replaceContent !== "function") {
+            return { ready: false, reason: "missing_replaceContent" };
+        }
+        if (typeof window.MR.captureSourceScrollAnchor !== "function") {
+            return { ready: false, reason: "missing_captureSourceScrollAnchor" };
+        }
+        if (typeof window.MR.scrollToSourceScrollAnchor !== "function") {
+            return { ready: false, reason: "missing_scrollToSourceScrollAnchor" };
+        }
+        const computedFont = window.getComputedStyle(document.body).fontFamily || "";
+        if (computedFont === "-webkit-standard" || computedFont === "Times" || computedFont.length === 0) {
+            return { ready: false, reason: "missing_css_font" };
+        }
+        const preview = document.querySelector('.markdown-preview');
+        if (preview) {
+            const pad = window.getComputedStyle(preview).paddingLeft;
+            if (pad === '0px') {
+                return { ready: false, reason: "missing_css_padding" };
+            }
+        }
+        return { ready: true };
+    })()
+    """
+
+    public enum Status: Equatable, Sendable {
+        case ready
+        case notReady(reason: String)
+    }
+
+    public static func evaluate(result: Any?) -> Status {
+        guard let dict = result as? [String: Any] else {
+            return .notReady(reason: "invalid_response")
+        }
+        let isReady = dict["ready"] as? Bool ?? false
+        if isReady {
+            return .ready
+        }
+        let reason = dict["reason"] as? String ?? "unknown"
+        return .notReady(reason: reason)
+    }
 }
 
 /// 文档输入变更的种类，用于渲染闸门判断。

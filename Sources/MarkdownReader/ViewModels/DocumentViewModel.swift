@@ -163,6 +163,15 @@ final class DocumentViewModel {
         scrollTransfer = nil
     }
 
+    /// 取消当前进行中的滚动交接（例如渲染失败或模式回滚时清理）。
+    func cancelScrollTransfer(id: UUID? = nil) {
+        if let id {
+            guard scrollTransfer?.id == id else { return }
+        }
+        scrollTransfer = nil
+    }
+
+
     /// Per-file 内容缓存：保存未写入磁盘的编辑内容
     /// 切换文件时保存当前内容，切换回来时恢复缓存内容
     /// 确保 per-file UndoManager 的 undo 动作与内容一致

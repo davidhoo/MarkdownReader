@@ -43,7 +43,7 @@ done
 
 echo "🔨 构建 ${APP_NAME} (${CONFIG}, ${ARCH})..."
 
-swift build -c "$CONFIG" --arch arm64
+swift build -c "$CONFIG" --arch arm64 --target MarkdownReader --target MarkdownReaderQL
 
 BUILD_DIR="$(swift build -c "$CONFIG" --arch arm64 --show-bin-path)"
 OBJECT_DIR="${PROJECT_DIR}/.build/${ARCH}-apple-macosx/${CONFIG}"
@@ -62,7 +62,7 @@ done < <(find "${OBJECT_DIR}" -name "resource_bundle_accessor.swift" -type f 2>/
 
 if [[ "$PATCHED" -gt 0 ]]; then
     echo "🔨 重新编译（应用 Bundle.module 修补）..."
-    swift build -c "$CONFIG" --arch arm64
+    swift build -c "$CONFIG" --arch arm64 --target MarkdownReader --target MarkdownReaderQL
 fi
 
 APP_BUNDLE="${PROJECT_DIR}/${APP_NAME}.app"
@@ -86,17 +86,30 @@ strip -x "$APP_BUNDLE/Contents/MacOS/${APP_NAME}"
 if [ -d "${BUILD_DIR}/${APP_NAME}_MarkdownReader.bundle" ]; then
     cp -R "${BUILD_DIR}/${APP_NAME}_MarkdownReader.bundle" "$APP_BUNDLE/Contents/Resources/"
 
-    # 移除 SPM bundle 中的 AppIcon（已通过 actool 编译到 Assets.car 中提供，无需重复）
     SPM_BUNDLE="${APP_BUNDLE}/Contents/Resources/${APP_NAME}_MarkdownReader.bundle"
-    if [ -d "${SPM_BUNDLE}/Assets.xcassets/AppIcon.appiconset" ]; then
-        rm -rf "${SPM_BUNDLE}/Assets.xcassets/AppIcon.appiconset"
-        # 如果 Assets.xcassets 目录已空（只剩 Contents.json），也一并移除
-        remaining=$(find "${SPM_BUNDLE}/Assets.xcassets" -mindepth 1 -not -name "Contents.json" 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$remaining" -eq 0 ]; then
-            rm -rf "${SPM_BUNDLE}/Assets.xcassets"
+
+    # 同步源码目录中最新的 Resources 文件，防止 SPM 增量构建缓存导致资源文件未被及时重新打包
+    if [ -d "${PROJECT_DIR}/Sources/${APP_NAME}/Resources" ]; then
+        if [ -d "${SPM_BUNDLE}/Contents/Resources/Resources" ]; then
+            cp -R "${PROJECT_DIR}/Sources/${APP_NAME}/Resources/" "${SPM_BUNDLE}/Contents/Resources/Resources/"
         fi
-        echo "🗑️  移除 SPM bundle 中冗余 AppIcon（已通过 Assets.car 提供）"
+        if [ -d "${SPM_BUNDLE}/Resources" ]; then
+            cp -R "${PROJECT_DIR}/Sources/${APP_NAME}/Resources/" "${SPM_BUNDLE}/Resources/"
+        fi
     fi
+
+    for icon_dir in "${SPM_BUNDLE}/Assets.xcassets/AppIcon.appiconset" \
+                    "${SPM_BUNDLE}/Contents/Resources/Assets.xcassets/AppIcon.appiconset"; do
+        if [ -d "$icon_dir" ]; then
+            rm -rf "$icon_dir"
+            parent_dir="$(dirname "$icon_dir")"
+            remaining=$(find "$parent_dir" -mindepth 1 -not -name "Contents.json" 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$remaining" -eq 0 ]; then
+                rm -rf "$parent_dir"
+            fi
+            echo "🗑️  移除 SPM bundle 中冗余 AppIcon（已通过 Assets.car 提供）"
+        fi
+    done
 fi
 
 # 复制依赖包的资源 bundle（Textual 的 prism-bundle.js 等）
@@ -242,9 +255,11 @@ if [ -d "$QL_OBJECTS" ] && [ -d "$KIT_OBJECTS" ]; then
         fi
     else
         echo "   ❌ Extension 链接失败"
+        exit 1
     fi
 else
-    echo "⚠️  未找到 Extension 目标文件: $QL_OBJECTS"
+    echo "❌ 未找到 Extension 目标文件: $QL_OBJECTS"
+    exit 1
 fi
 
 # 复制主应用的资源 bundle 到 Extension（Extension 运行在独立进程中，无法直接访问主 app 的资源）
@@ -253,20 +268,28 @@ if [ -d "${BUILD_DIR}/${APP_NAME}_MarkdownReader.bundle" ]; then
 
     # QL Extension 不需要 AppIcon（Extension 不显示自己的图标）
     QL_BUNDLE="${QL_APPEX}/Contents/Resources/${APP_NAME}_MarkdownReader.bundle"
-    if [ -d "${QL_BUNDLE}/Assets.xcassets/AppIcon.appiconset" ]; then
-        rm -rf "${QL_BUNDLE}/Assets.xcassets/AppIcon.appiconset"
-        remaining=$(find "${QL_BUNDLE}/Assets.xcassets" -mindepth 1 -not -name "Contents.json" 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$remaining" -eq 0 ]; then
-            rm -rf "${QL_BUNDLE}/Assets.xcassets"
+    for icon_dir in "${QL_BUNDLE}/Assets.xcassets/AppIcon.appiconset" \
+                    "${QL_BUNDLE}/Contents/Resources/Assets.xcassets/AppIcon.appiconset"; do
+        if [ -d "$icon_dir" ]; then
+            rm -rf "$icon_dir"
+            parent_dir="$(dirname "$icon_dir")"
+            remaining=$(find "$parent_dir" -mindepth 1 -not -name "Contents.json" 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$remaining" -eq 0 ]; then
+                rm -rf "$parent_dir"
+            fi
+            echo "🗑️  移除 QL Extension bundle 中冗余 AppIcon"
         fi
-        echo "🗑️  移除 QL Extension bundle 中冗余 AppIcon"
-    fi
+    done
 
     # QL Extension 不需要 mermaid（Quick Look 预览不渲染复杂图表，省 3.1 MB）
-    if [ -f "${QL_BUNDLE}/Resources/js/mermaid.min.js" ]; then
-        rm -f "${QL_BUNDLE}/Resources/js/mermaid.min.js"
-        echo "🗑️  移除 QL Extension bundle 中 mermaid.min.js（省 ~3.1 MB）"
-    fi
+    for mermaid_file in "${QL_BUNDLE}/Resources/js/mermaid.min.js" \
+                        "${QL_BUNDLE}/Contents/Resources/Resources/js/mermaid.min.js" \
+                        "${QL_BUNDLE}/Contents/Resources/js/mermaid.min.js"; do
+        if [ -f "$mermaid_file" ]; then
+            rm -f "$mermaid_file"
+            echo "🗑️  移除 QL Extension bundle 中 mermaid.min.js（省 ~3.1 MB）: $mermaid_file"
+        fi
+    done
 fi
 
 # 复制依赖包的资源 bundle 到 Extension
@@ -345,5 +368,26 @@ else
     echo "✅ ${APP_NAME}.app 已生成: ${APP_BUNDLE}"
     echo "   ⚠️  未签名 — 分发时接收方需右键打开绕过 Gatekeeper"
 fi
+
+echo ""
+echo "🧪 运行渲染资源门禁验证..."
+VERIFY_BIN="${PROJECT_DIR}/scripts/.verify-render-resources-bin"
+if [ ! -f "$VERIFY_BIN" ] || [ "${PROJECT_DIR}/scripts/verify-render-resources.swift" -nt "$VERIFY_BIN" ] || [ "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" -nt "$VERIFY_BIN" ] || [ "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift" -nt "$VERIFY_BIN" ]; then
+    echo "🔨 编译渲染资源门禁验证工具..."
+    swiftc -parse-as-library \
+        "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" \
+        "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift" \
+        "${PROJECT_DIR}/scripts/verify-render-resources.swift" \
+        -o "$VERIFY_BIN"
+fi
+
+"$VERIFY_BIN" "$APP_BUNDLE"
+
+# 隔离环境验证：复制到 /tmp 测试脱离源码树时资源解析依然正常
+ISOLATED_DIR="$(mktemp -d /tmp/mr-verify-XXXXXX)"
+cp -R "$APP_BUNDLE" "$ISOLATED_DIR/"
+echo "🧪 隔离环境验证 (${ISOLATED_DIR}/${APP_NAME}.app)..."
+"$VERIFY_BIN" "${ISOLATED_DIR}/${APP_NAME}.app"
+rm -rf "$ISOLATED_DIR"
 
 echo "   运行: open ${APP_BUNDLE}"

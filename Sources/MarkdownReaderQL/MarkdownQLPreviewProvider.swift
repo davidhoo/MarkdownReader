@@ -227,23 +227,8 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
     }
 
     private nonisolated static func resolveResourceSearchPaths() -> [URL] {
-        let searchPaths: [URL] = [
-            Bundle.main.resourceURL?.appendingPathComponent("MarkdownReader_MarkdownReader.bundle").appendingPathComponent("Resources"),
-            Bundle.main.resourceURL?.appendingPathComponent("MarkdownReader_MarkdownReader.bundle").appendingPathComponent("Contents").appendingPathComponent("Resources"),
-            Bundle.main.resourceURL,
-            Bundle.main.bundleURL
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("Resources"),
-            Bundle.main.bundleURL
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("Resources")
-                .appendingPathComponent("MarkdownReader_MarkdownReader.bundle")
-                .appendingPathComponent("Resources"),
-        ].compactMap { $0 }
-
-        for path in searchPaths {
+        let candidateRoots = MarkdownResourceLocator.candidateResourceRoots(for: Bundle.main)
+        for path in candidateRoots {
             let cssPath = path.appendingPathComponent("css/markdown.css")
             if FileManager.default.fileExists(atPath: cssPath.path) {
                 logger.info("Found resources at: \(path.path)")
@@ -252,7 +237,7 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
         }
 
         logger.error("No resource path found")
-        return searchPaths
+        return candidateRoots
     }
 }
 
@@ -260,9 +245,11 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
 
 private final class QLSchemeHandler: NSObject, WKURLSchemeHandler {
     private let resourceSearchPaths: [URL]
+    private let hostBundle: Bundle
 
-    init(resourceSearchPaths: [URL]) {
+    init(resourceSearchPaths: [URL], hostBundle: Bundle = .main) {
         self.resourceSearchPaths = resourceSearchPaths
+        self.hostBundle = hostBundle
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
@@ -277,18 +264,23 @@ private final class QLSchemeHandler: NSObject, WKURLSchemeHandler {
             path = String(path.dropFirst())
         }
 
-        let resourceURL = resolveResource(for: path)
+        let resourceURL = MarkdownResourceLocator.resolveResourceURL(
+            path: path,
+            baseURL: nil,
+            resourceSearchPaths: resourceSearchPaths,
+            hostBundle: hostBundle
+        )
 
         guard let resourceURL, FileManager.default.fileExists(atPath: resourceURL.path) else {
             let response = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!
             urlSchemeTask.didReceive(response)
+            urlSchemeTask.didReceive(Data())
             urlSchemeTask.didFinish()
             return
         }
 
         do {
-            let data = try Data(contentsOf: resourceURL)
-            let mimeType = Self.mimeType(for: resourceURL.pathExtension)
+            let (data, mimeType) = try MarkdownResourceLocator.loadResourceData(at: resourceURL)
             let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": mimeType])!
             urlSchemeTask.didReceive(response)
             urlSchemeTask.didReceive(data)
@@ -299,41 +291,6 @@ private final class QLSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
-
-    private func resolveResource(for path: String) -> URL? {
-        let absoluteURL = URL(fileURLWithPath: "/" + path)
-        if FileManager.default.fileExists(atPath: absoluteURL.path) {
-            return absoluteURL
-        }
-
-        for searchPath in resourceSearchPaths {
-            let url = searchPath.appendingPathComponent(path)
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
-        }
-
-        return nil
-    }
-
-    private static func mimeType(for pathExtension: String) -> String {
-        switch pathExtension.lowercased() {
-        case "css": return "text/css"
-        case "js": return "application/javascript"
-        case "html", "htm": return "text/html"
-        case "png": return "image/png"
-        case "jpg", "jpeg": return "image/jpeg"
-        case "gif": return "image/gif"
-        case "svg": return "image/svg+xml"
-        case "webp": return "image/webp"
-        case "ico": return "image/x-icon"
-        case "woff": return "font/woff"
-        case "woff2": return "font/woff2"
-        case "ttf": return "font/ttf"
-        case "json": return "application/json"
-        default: return "application/octet-stream"
-        }
-    }
 }
 
 // MARK: - Navigation Delegate

@@ -227,4 +227,94 @@ final class WebViewRenderSchedulerTests: XCTestCase {
             javaScriptResult: true, isCurrentGeneration: false
         ))
     }
+
+    // MARK: - 失败退出出口（T2）
+
+    func testFailureIfMatchingResetsTransition() {
+        var transition = RenderedModeTransitionState()
+        transition.begin()
+        transition.track(generation: 3)
+        XCTAssertTrue(transition.keepsRawVisible)
+
+        // 世代不匹配时不上报失败
+        XCTAssertFalse(transition.failIfMatching(generation: 2))
+        XCTAssertTrue(transition.keepsRawVisible)
+
+        // 世代匹配时重置过渡
+        XCTAssertTrue(transition.failIfMatching(generation: 3))
+        XCTAssertFalse(transition.keepsRawVisible)
+    }
+
+    func testFailTransferResetsTransition() {
+        var transition = RenderedModeTransitionState()
+        let transferId = UUID()
+        transition.begin(generation: 3, transferId: transferId)
+        XCTAssertTrue(transition.keepsRawVisible)
+
+        // 不匹配的旧/异构 ID 不能取消过渡
+        let wrongId = UUID()
+        XCTAssertFalse(transition.failTransferIfMatching(id: wrongId))
+        XCTAssertTrue(transition.keepsRawVisible)
+
+        // 匹配当前交接 ID 才能重置过渡
+        XCTAssertTrue(transition.failTransferIfMatching(id: transferId))
+        XCTAssertFalse(transition.keepsRawVisible)
+    }
+
+    func testExpiredScrollTransferFailureDoesNotRevertNewTransition() {
+        var transition = RenderedModeTransitionState()
+        let oldTransferId = UUID()
+        transition.begin(generation: 1, transferId: oldTransferId)
+
+        // 用户快速进行新的一轮切换，开启新世代和新交接 ID
+        let newTransferId = UUID()
+        transition.begin(generation: 2, transferId: newTransferId)
+        XCTAssertTrue(transition.keepsRawVisible)
+
+        // 上一轮超时的旧失败回调迟到到达
+        let oldFailed = transition.failTransferIfMatching(id: oldTransferId)
+        XCTAssertFalse(oldFailed, "旧交接超时失败不得打断当前进行中的新过渡")
+        XCTAssertTrue(transition.keepsRawVisible, "当前过渡状态必须得到保护")
+
+        // 新交接的正常完成应成功闭合过渡
+        transition.acknowledgeTransfer(id: newTransferId)
+        XCTAssertTrue(transition.completeIfMatching(generation: 2))
+        XCTAssertFalse(transition.keepsRawVisible)
+    }
+
+    func testFailureBeforeTransferIdIsBoundDoesNotCancelTransition() {
+        var transition = RenderedModeTransitionState()
+        transition.begin()
+        transition.track(generation: 4)
+        XCTAssertNil(transition.targetTransferId)
+
+        XCTAssertFalse(transition.failTransferIfMatching(id: UUID()))
+        XCTAssertTrue(transition.keepsRawVisible, "交接 ID 尚未绑定时，任何失败都不能结束过渡")
+    }
+
+    // MARK: - 渲染就绪评估策略
+
+    func testReadinessPolicyEvaluatesReadyStatus() {
+        let readyResult: [String: Any] = ["ready": true]
+        XCTAssertEqual(WebViewRenderReadinessPolicy.evaluate(result: readyResult), .ready)
+    }
+
+    func testReadinessPolicyEvaluatesMissingMR() {
+        let missingMRResult: [String: Any] = ["ready": false, "reason": "missing_mr"]
+        XCTAssertEqual(WebViewRenderReadinessPolicy.evaluate(result: missingMRResult), .notReady(reason: "missing_mr"))
+    }
+
+    func testReadinessPolicyEvaluatesMissingCSS() {
+        let missingCSSResult: [String: Any] = ["ready": false, "reason": "missing_css_font"]
+        XCTAssertEqual(WebViewRenderReadinessPolicy.evaluate(result: missingCSSResult), .notReady(reason: "missing_css_font"))
+
+        let missingPaddingResult: [String: Any] = ["ready": false, "reason": "missing_css_padding"]
+        XCTAssertEqual(WebViewRenderReadinessPolicy.evaluate(result: missingPaddingResult), .notReady(reason: "missing_css_padding"))
+    }
+
+    func testReadinessPolicyRejectsInvalidResponse() {
+        XCTAssertEqual(WebViewRenderReadinessPolicy.evaluate(result: nil), .notReady(reason: "invalid_response"))
+        XCTAssertEqual(WebViewRenderReadinessPolicy.evaluate(result: "invalid"), .notReady(reason: "invalid_response"))
+        XCTAssertEqual(WebViewRenderReadinessPolicy.evaluate(result: [:]), .notReady(reason: "unknown"))
+    }
 }

@@ -925,7 +925,24 @@
           return false;
         }
         window.scrollTo({ top: targetY, behavior: 'auto' });
-        await new Promise(function (resolve) { requestAnimationFrame(resolve); });
+        await new Promise(function (resolve) {
+          var done = false;
+          var timer = setTimeout(function () {
+            if (!done) {
+              done = true;
+              resolve();
+            }
+          }, 50);
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(function () {
+              if (!done) {
+                done = true;
+                clearTimeout(timer);
+                resolve();
+              }
+            });
+          }
+        });
         return true;
       } catch (e) {
         return false;

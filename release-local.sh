@@ -87,6 +87,17 @@ echo ""
 echo "🔍 验证构建结果..."
 codesign --verify --deep --strict "${APP_NAME}.app" 2>&1
 echo "✅ 签名验证通过"
+echo "🧪 运行渲染资源门禁验证..."
+VERIFY_BIN="$(dirname "$0")/scripts/.verify-render-resources-bin"
+if [ ! -f "$VERIFY_BIN" ] || [ "$(dirname "$0")/scripts/verify-render-resources.swift" -nt "$VERIFY_BIN" ] || [ "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" -nt "$VERIFY_BIN" ] || [ "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift" -nt "$VERIFY_BIN" ]; then
+    swiftc -parse-as-library \
+        "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" \
+        "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift" \
+        "$(dirname "$0")/scripts/verify-render-resources.swift" \
+        -o "$VERIFY_BIN"
+fi
+"$VERIFY_BIN" "${APP_NAME}.app"
+echo "✅ 渲染资源门禁验证通过"
 
 # 5. 创建 GitHub Release
 echo ""

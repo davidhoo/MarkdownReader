@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import MarkdownReaderKit
 import os.log
 
 /// 将文档复制的 SF Symbol 栅格化为透明 PNG data URL，供 WebKit 以 CSS mask 显示。

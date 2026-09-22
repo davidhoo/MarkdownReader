@@ -142,74 +142,9 @@ jobs:
       - name: Install create-dmg
         run: brew install create-dmg
 
-      - name: Build
-        run: swift build -c release --arch arm64
-
-      - name: Patch Bundle.module resource paths
+      - name: Build & Package App
         run: |
-          PATCHED=0
-          while IFS= read -r accessor; do
-            if grep -q 'Bundle\.main\.bundleURL\.appendingPathComponent' "$accessor"; then
-              sed -i '' 's/Bundle\.main\.bundleURL\.appendingPathComponent/(Bundle.main.resourceURL ?? Bundle.main.bundleURL).appendingPathComponent/g' "$accessor"
-              PATCHED=$((PATCHED + 1))
-              echo "📝 Patched Bundle.module path: $accessor"
-            fi
-          done < <(find .build -name "resource_bundle_accessor.swift" -type f)
-
-          if [[ "$PATCHED" -gt 0 ]]; then
-            echo "🔨 Rebuilding with patched Bundle.module paths..."
-            swift build -c release --arch arm64
-          else
-            echo "✅ No patches needed (accessors already use resourceURL)"
-          fi
-
-      - name: Assemble .app bundle
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          APP_DIR="${{ env.PRODUCT_NAME }}.app"
-          RESOURCES_DIR="$APP_DIR/Contents/Resources"
-          MACOS_DIR="$APP_DIR/Contents/MacOS"
-
-          mkdir -p "$MACOS_DIR"
-          mkdir -p "$RESOURCES_DIR"
-
-          BUILD_DIR=".build/arm64-apple-macosx/release"
-          cp "$BUILD_DIR/${{ env.PRODUCT_NAME }}" "$MACOS_DIR/"
-          sed "s/__VERSION__/$VERSION/g" scripts/Info.plist > "$APP_DIR/Contents/Info.plist"
-
-          RESOURCE_BUNDLE="$BUILD_DIR/${{ env.PRODUCT_NAME }}_MarkdownReader.bundle"
-          if [ -d "$RESOURCE_BUNDLE" ]; then
-            cp -R "$RESOURCE_BUNDLE/" "$RESOURCES_DIR/"
-            echo "✅ Copied SPM resource bundle"
-          fi
-
-          for bundle in "$BUILD_DIR"/*.bundle; do
-            bundle_name=$(basename "$bundle")
-            if [[ "$bundle_name" != "${{ env.PRODUCT_NAME }}_MarkdownReader.bundle" ]]; then
-              cp -R "$bundle" "$RESOURCES_DIR/"
-              echo "📦 Copied dependency bundle: $bundle_name"
-            fi
-          done
-
-          echo "📦 Compiling Assets.xcassets with actool..."
-          actool \
-            --compile "$RESOURCES_DIR" \
-            --platform macosx \
-            --minimum-deployment-target 26 \
-            --app-icon AppIcon \
-            --output-format human-readable-text \
-            --output-partial-info-plist /tmp/partial.plist \
-            "Sources/${{ env.PRODUCT_NAME }}/Assets.xcassets"
-
-          echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
-          echo "✅ .app bundle assembled"
-
-      - name: Code sign .app
-        run: |
-          # 不使用 --deep（Apple 已弃用），分别签名 bundle 和主 app
-          find "${{ env.PRODUCT_NAME }}.app/Contents/Resources" -name "*.bundle" -exec codesign --force --sign - {} \; 2>/dev/null || true
-          codesign --force --sign - "${{ env.PRODUCT_NAME }}.app"
-          echo "✅ App signed (ad-hoc)"
+          ./build-app.sh --release --sign
 
       - name: Create DMG
         run: |

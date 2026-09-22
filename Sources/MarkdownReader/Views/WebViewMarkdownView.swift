@@ -1,6 +1,7 @@
 import SwiftUI
 import MarkdownReaderKit
 import WebKit
+import OSLog
 
 class MarkdownNavigationDecider: WebPage.NavigationDeciding {
     /// 回归修复：Markdown 内链不再全局广播 `.openLinkedMarkdownFile`。WebView 通过
@@ -122,6 +123,7 @@ struct WebViewMarkdownView: View {
             // （理论上已被清空）也一并清除，确保定位只服从当前可见模式。
             if !isRenderedMode {
                 pendingScrollToSourceLine = nil
+                cancelScrollTransferWork()
             }
         }
     }
@@ -132,6 +134,8 @@ struct WebViewMarkdownView: View {
     /// 报告过的世代才会触发；过期世代、取消或 JavaScript 失败均不报告。DetailView 用它
     /// 调用 `RenderedModeTransitionState.completeIfMatching(generation:)` 结束过渡。
     var onRenderGenerationCompleted: ((UInt) -> Void)?
+    var onRenderGenerationFailed: ((UInt, String) -> Void)?
+    var onScrollTransferFailed: ((UUID) -> Void)?
 
     @Environment(\.language) private var language
     /// 当前屏幕像素倍率。变化时经既有 `requestRender()` 走 latest-wins 调度整页重载，
@@ -154,8 +158,15 @@ struct WebViewMarkdownView: View {
     /// 当前整页已加载的运行时需求。增量替换前与下一份 HTML 的需求比较：需求变化即提升为
     /// 整页加载（新出现的图表/公式需对应脚本，已加载库无法卸载）。仅整页加载路径写入。
     @State private var loadedRuntimeRequirements: MarkdownHTMLService.MarkdownRuntimeRequirements?
+    private let logger = Logger(subsystem: "com.markdownreader.app", category: "WebViewMarkdownView")
     /// 当前进行中的增量 `MR.replaceContent` 写入任务，新请求或视图消失时取消。
     @State private var contentReplacementTask: Task<Void, Never>?
+    /// 当前进行中的滚动交接定位任务，新交接、模式离开或视图消失时取消。
+    @State private var scrollTransferTask: Task<Void, Never>?
+    /// 与定位任务配套的超时。它是独立 Task，取消定位任务不会自动取消它，必须单独取消。
+    @State private var scrollTransferTimeoutTask: Task<Void, Never>?
+    /// 当前仍有效的滚动交接 ID。超时回调只认这个值，避免读到发起当时冻结的 View 副本。
+    @State private var activeScrollTransferID: UUID?
     /// 整页加载中等待完成的渲染世代。`page.load` 时记录，`page.isLoading` 变 false 且
     /// 世代仍最新时通过 `onRenderGenerationCompleted` 报告。用于 loadPage 完成边界。
     @State private var pendingLoadCompletionGeneration: UInt?
@@ -262,9 +273,18 @@ struct WebViewMarkdownView: View {
     /// `scrollTransfer` 变化：仅消费 destination == .rendered 且 contentVersion 匹配的交接。
     /// 页面加载中暂存，加载结束后验证 id/version 仍一致再执行。
     private func handleScrollTransferChange(_ newValue: ScrollTransfer?) {
-        guard let transfer = newValue else { return }
-        guard transfer.destination == .rendered else { return }
-        guard transfer.contentVersion == contentVersion else { return }
+        guard let transfer = newValue else {
+            cancelScrollTransferWork()
+            return
+        }
+        guard transfer.destination == .rendered else {
+            cancelScrollTransferWork()
+            return
+        }
+        guard transfer.contentVersion == contentVersion else {
+            cancelScrollTransferWork()
+            return
+        }
         if page.isLoading {
             pendingScrollTransfer = transfer
         } else {
@@ -272,21 +292,64 @@ struct WebViewMarkdownView: View {
         }
     }
 
-    /// 调用 JS bridge 定位到锚点位置，成功后以相同 UUID 回执。
+    /// 调用 JS bridge 定位到锚点位置，成功后以相同 UUID 回执；失败或超时触发 onScrollTransferFailed。
+    private func cancelScrollTransferWork() {
+        scrollTransferTask?.cancel()
+        scrollTransferTask = nil
+        scrollTransferTimeoutTask?.cancel()
+        scrollTransferTimeoutTask = nil
+        activeScrollTransferID = nil
+    }
+
     private func applyScrollTransfer(_ transfer: ScrollTransfer) {
+        cancelScrollTransferWork()
         let anchor = transfer.anchor
         let id = transfer.id
-       Task { @MainActor [anchor, id, page] in
-           // callJavaScript 将字符串作为函数体执行，需要显式 return 才能拿到结果。
-           // scrollToSourceScrollAnchor 是 async 函数，需要 await。
-           let js = "return await MR.scrollToSourceScrollAnchor(\(anchor.sourcePosition), \(anchor.documentProgress))"
-          let result = try? await page.callJavaScript(js)
-          let success = result as? Bool ?? false
-           if success {
-                onScrollTransferApplied?(id)
+        activeScrollTransferID = id
+        scrollTransferTask = Task { @MainActor [anchor, id, page] in
+            // callJavaScript 将字符串作为函数体执行，需要显式 return 才能拿到结果。
+            // scrollToSourceScrollAnchor 是 async 函数，需要 await。
+            let js = "return await MR.scrollToSourceScrollAnchor(\(anchor.sourcePosition), \(anchor.documentProgress))"
+
+            // 超时是独立 Task，取消定位任务不会连带取消它。回执前先核对仍有效的交接 ID。
+            scrollTransferTimeoutTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1500))
+                guard !Task.isCancelled, activeScrollTransferID == id else {
+                    logger.notice("Scroll transfer timeout ignored: superseded or cancelled (transfer: \(id.uuidString, privacy: .public))")
+                    return
+                }
+                logger.error("Scroll transfer timed out after 1500ms for transfer \(id.uuidString, privacy: .public)")
+                onScrollTransferFailed?(id)
+            }
+
+            do {
+                let res = try await page.callJavaScript(js)
+                scrollTransferTimeoutTask?.cancel()
+                guard !Task.isCancelled, activeScrollTransferID == id else {
+                    logger.notice("Scroll transfer result ignored: task cancelled or superseded (transfer: \(id.uuidString, privacy: .public))")
+                    return
+                }
+                let success = (res as? Bool) ?? false
+                if success {
+                    logger.info("Scroll transfer applied successfully for transfer \(id.uuidString, privacy: .public)")
+                    onScrollTransferApplied?(id)
+                } else {
+                    logger.error("Scroll transfer returned false from JS for transfer \(id.uuidString, privacy: .public)")
+                    onScrollTransferFailed?(id)
+                }
+            } catch {
+                scrollTransferTimeoutTask?.cancel()
+                guard !Task.isCancelled, activeScrollTransferID == id else {
+                    logger.notice("Scroll transfer JS error ignored: context changed (transfer: \(id.uuidString, privacy: .public))")
+                    return
+                }
+                logger.error("Scroll transfer JS error for transfer \(id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                onScrollTransferFailed?(id)
             }
         }
     }
+
+
 
     /// 采集当前视口顶部的源码滚动锚点，通过 completion 回调返回。
    private func performCaptureSourceScrollAnchor() {
@@ -342,13 +405,51 @@ struct WebViewMarkdownView: View {
         if let loadGen = pendingLoadCompletionGeneration {
             pendingLoadCompletionGeneration = nil
             if renderScheduler.accepts(loadGen) {
-                onRenderGenerationCompleted?(loadGen)
+                checkReadinessAndReportCompletion(generation: loadGen)
             }
         }
         if let noneGen = pendingNoneCompletionGeneration {
             pendingNoneCompletionGeneration = nil
             if renderScheduler.accepts(noneGen) {
-                onRenderGenerationCompleted?(noneGen)
+                checkReadinessAndReportCompletion(generation: noneGen)
+            }
+        }
+    }
+
+    /// 在报告完成前执行渲染就绪校验，确认 CSS 生效且 MR 运行时完备；
+    /// 校验失败时上报 onRenderGenerationFailed 而非伪成功。
+    private func checkReadinessAndReportCompletion(generation: UInt) {
+        guard renderScheduler.accepts(generation) else {
+            logger.notice("Readiness check skipped: generation \(generation) expired before check")
+            return
+        }
+        Task { @MainActor [page, generation] in
+            guard renderScheduler.accepts(generation) else {
+                logger.notice("Readiness check skipped: generation \(generation) expired during task start")
+                return
+            }
+            do {
+                let jsResult = try await page.callJavaScript("return " + WebViewRenderReadinessPolicy.checkScript)
+                guard renderScheduler.accepts(generation) else {
+                    logger.notice("Readiness check result ignored: generation \(generation) expired after JS call")
+                    return
+                }
+                let status = WebViewRenderReadinessPolicy.evaluate(result: jsResult)
+                switch status {
+                case .ready:
+                    logger.info("Render generation \(generation) verified ready")
+                    onRenderGenerationCompleted?(generation)
+                case .notReady(let reason):
+                    logger.error("Render generation \(generation) not ready: \(reason, privacy: .public)")
+                    onRenderGenerationFailed?(generation, reason)
+                }
+            } catch {
+                guard renderScheduler.accepts(generation) else {
+                    logger.notice("Readiness check error ignored: generation \(generation) expired after JS error")
+                    return
+                }
+                logger.error("Render generation \(generation) readiness check JS error: \(error.localizedDescription, privacy: .public)")
+                onRenderGenerationFailed?(generation, error.localizedDescription)
             }
         }
     }
@@ -367,6 +468,7 @@ struct WebViewMarkdownView: View {
         scrollSyncTimer?.invalidate()
         contentReplacementTask?.cancel()
         contentReplacementTask = nil
+        cancelScrollTransferWork()
         pendingLoadCompletionGeneration = nil
         pendingNoneCompletionGeneration = nil
         _ = renderScheduler.request()
@@ -571,27 +673,38 @@ struct WebViewMarkdownView: View {
             // （固定合同 3）。catch 不打印可见错误、不结束过渡，也不重试或 reload。
             do {
                 let result = try await page.callJavaScript("return MR.replaceContent('\(escapedHTML)')")
-                guard !Task.isCancelled,
-                      WebViewContentReplacementCompletionPolicy.shouldComplete(
-                          javaScriptResult: result,
-                          isCurrentGeneration: renderScheduler.accepts(generation)
-                      ) else {
+                guard !Task.isCancelled, renderScheduler.accepts(generation) else {
+                    logger.notice("replaceContent result ignored: task cancelled or generation \(generation) expired")
                     return
                 }
-                onRenderGenerationCompleted?(generation)
+                if WebViewContentReplacementCompletionPolicy.shouldComplete(
+                    javaScriptResult: result,
+                    isCurrentGeneration: true
+                ) {
+                    logger.info("replaceContent completed for generation \(generation)")
+                    onRenderGenerationCompleted?(generation)
+                } else {
+                    logger.error("replaceContent returned false/invalid for generation \(generation)")
+                    onRenderGenerationFailed?(generation, "MR.replaceContent returned false")
+                }
             } catch {
-                return
+                guard !Task.isCancelled, renderScheduler.accepts(generation) else {
+                    logger.notice("replaceContent JS error ignored: task cancelled or generation \(generation) expired")
+                    return
+                }
+                logger.error("replaceContent JS error for generation \(generation): \(error.localizedDescription, privacy: .public)")
+                onRenderGenerationFailed?(generation, error.localizedDescription)
             }
         }
     }
 
-    /// 快照无变化（`.none`）时的完成报告：页面空闲则立即报告，否则暂存世代，
+    /// 快照无变化（`.none`）时的完成报告：页面空闲则校验就绪后报告，否则暂存世代，
     /// 待 `page.isLoading` 变 false 时由 `handleLoadingChange` 补报。
     private func reportCompletionIfIdle(generation: UInt) {
         if page.isLoading {
             pendingNoneCompletionGeneration = generation
         } else {
-            onRenderGenerationCompleted?(generation)
+            checkReadinessAndReportCompletion(generation: generation)
         }
     }
 
@@ -938,9 +1051,17 @@ private struct DocumentContentEventsModifier: ViewModifier {
             // 纯内容变更：仅 Rendered 时请求渲染；Raw 编辑期闸门否决，隐藏 WebView 保持快照。
             .onChange(of: self.content) { _, _ in onRequestRenderIfNeeded(.content) }
             .onChange(of: contentVersion) { _, _ in onRequestRenderIfNeeded(.contentVersion) }
-            .onChange(of: fileURL) { _, _ in onRequestRenderIfNeeded(.fileURL) }
-            // isRenderedMode false→true：请求一次最新快照；true→false：闸门否决，不请求。
-            .onChange(of: isRenderedMode) { _, _ in onRequestRenderIfNeeded(.displayMode) }
+            .onChange(of: fileURL) { _, _ in
+                onScrollTransferChange(nil)
+                onRequestRenderIfNeeded(.fileURL)
+            }
+            // isRenderedMode false→true：请求一次最新快照；true→false：取消未完成的滚动交接。
+            .onChange(of: isRenderedMode) { _, isRendered in
+                if !isRendered {
+                    onScrollTransferChange(nil)
+                }
+                onRequestRenderIfNeeded(.displayMode)
+            }
            .onChange(of: scrollToLine) { _, newValue in onScrollToLineChange(newValue) }
          .onChange(of: scrollTransfer) { _, newValue in onScrollTransferChange(newValue) }
          .onChange(of: renderedCaptureRequest) { _, _ in onRenderedCaptureRequest() }

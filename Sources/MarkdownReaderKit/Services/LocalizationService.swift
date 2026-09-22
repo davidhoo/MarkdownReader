@@ -239,6 +239,7 @@ public enum L10n {
         case titleBarExportPDF
         case exportPDFSuccess
         case exportPDFFailed
+        case renderFailed
 
         // 拖拽
         case unsupportedFileTypeAlert
@@ -450,6 +451,8 @@ public enum L10n {
         .titleBarExportPDF: "Export PDF",
         .exportPDFSuccess: "PDF exported successfully",
         .exportPDFFailed: "Failed to export PDF",
+        .renderFailed: "Rendering failed, returned to edit mode",
+
         .unsupportedFileTypeAlert: "Unsupported file type (.{ext}). Only Markdown files can be opened.",
         .viewZoomIn: "Zoom In",
         .viewZoomOut: "Zoom Out",
@@ -652,6 +655,8 @@ public enum L10n {
         .titleBarExportPDF: "导出 PDF",
         .exportPDFSuccess: "PDF 导出成功",
         .exportPDFFailed: "PDF 导出失败",
+        .renderFailed: "渲染失败，已返回编辑模式",
+
         .unsupportedFileTypeAlert: "不支持的文件类型（.{ext}）。仅支持打开 Markdown 文件。",
         .viewZoomIn: "放大",
         .viewZoomOut: "缩小",
@@ -854,6 +859,8 @@ public enum L10n {
         .titleBarExportPDF: "匯出 PDF",
         .exportPDFSuccess: "PDF 匯出成功",
         .exportPDFFailed: "PDF 匯出失敗",
+        .renderFailed: "渲染失敗，已返回編輯模式",
+
         .unsupportedFileTypeAlert: "不支援的檔案類型（.{ext}）。僅支援開啟 Markdown 檔案。",
         .viewZoomIn: "放大",
         .viewZoomOut: "縮小",

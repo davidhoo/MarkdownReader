@@ -1,18 +1,23 @@
 import Foundation
 import WebKit
+import OSLog
 
 public struct MarkdownURLSchemeHandler: URLSchemeHandler {
+    private static let logger = Logger(subsystem: "com.markdownreader.app", category: "MarkdownURLSchemeHandler")
     private let baseURL: URL?
     private let resourceSearchPaths: [URL]?
+    private let hostBundle: Bundle
 
-    public init(baseURL: URL?, resourceSearchPaths: [URL]? = nil) {
+    public init(baseURL: URL?, resourceSearchPaths: [URL]? = nil, hostBundle: Bundle = .main) {
         self.baseURL = baseURL
         self.resourceSearchPaths = resourceSearchPaths
+        self.hostBundle = hostBundle
     }
 
     public func reply(for request: URLRequest) -> some AsyncSequence<URLSchemeTaskResult, any Error> {
         let capturedBaseURL = baseURL
         let capturedResourceSearchPaths = resourceSearchPaths
+        let capturedHostBundle = hostBundle
         return AsyncThrowingStream { continuation in
             let url = request.url
             let scheme = url?.scheme
@@ -31,9 +36,15 @@ public struct MarkdownURLSchemeHandler: URLSchemeHandler {
                 path = String(path.dropFirst())
             }
 
-            let resourceURL = Self.resolveResourceURL(path: path, baseURL: capturedBaseURL, resourceSearchPaths: capturedResourceSearchPaths)
+            let resourceURL = MarkdownResourceLocator.resolveResourceURL(
+                path: path,
+                baseURL: capturedBaseURL,
+                resourceSearchPaths: capturedResourceSearchPaths,
+                hostBundle: capturedHostBundle
+            )
 
             guard let resourceURL, FileManager.default.fileExists(atPath: resourceURL.path) else {
+                Self.logger.error("Resource 404 not found: \(path, privacy: .public)")
                 let response = HTTPURLResponse(
                     url: url!,
                     statusCode: 404,
@@ -47,8 +58,7 @@ public struct MarkdownURLSchemeHandler: URLSchemeHandler {
             }
 
             do {
-                let data = try Data(contentsOf: resourceURL)
-                let mimeType = Self.mimeType(for: resourceURL.pathExtension)
+                let (data, mimeType) = try MarkdownResourceLocator.loadResourceData(at: resourceURL)
                 let response = HTTPURLResponse(
                     url: url!,
                     statusCode: 200,
@@ -59,58 +69,27 @@ public struct MarkdownURLSchemeHandler: URLSchemeHandler {
                 continuation.yield(.data(data))
                 continuation.finish()
             } catch {
+                Self.logger.error("Failed to read resource at \(resourceURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 continuation.finish(throwing: error)
             }
         }
     }
 
-    private static func resolveResourceURL(path: String, baseURL: URL?, resourceSearchPaths: [URL]?) -> URL? {
-        let absoluteURL = URL(fileURLWithPath: "/" + path)
-        if FileManager.default.fileExists(atPath: absoluteURL.path) {
-            return absoluteURL
-        }
-
-        if let baseURL, FileManager.default.fileExists(atPath: baseURL.appendingPathComponent(path).path) {
-            return baseURL.appendingPathComponent(path)
-        }
-
-        var searchPaths: [URL] = []
-
-        if let customPaths = resourceSearchPaths {
-            searchPaths = customPaths.map { $0.appendingPathComponent(path) }
-        } else {
-            searchPaths = [
-                Bundle.main.resourceURL?.appendingPathComponent("MarkdownReader_MarkdownReader.bundle").appendingPathComponent("Resources").appendingPathComponent(path),
-                Bundle.main.resourceURL?.appendingPathComponent("Resources").appendingPathComponent(path),
-                Bundle.main.resourceURL?.appendingPathComponent(path),
-            ].compactMap { $0 }
-        }
-
-        for url in searchPaths {
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
-        }
-
-        return nil
+    public static func resolveResourceURL(
+        path: String,
+        baseURL: URL? = nil,
+        resourceSearchPaths: [URL]? = nil,
+        hostBundle: Bundle = .main
+    ) -> URL? {
+        MarkdownResourceLocator.resolveResourceURL(
+            path: path,
+            baseURL: baseURL,
+            resourceSearchPaths: resourceSearchPaths,
+            hostBundle: hostBundle
+        )
     }
 
-    private static func mimeType(for pathExtension: String) -> String {
-        switch pathExtension.lowercased() {
-        case "css": return "text/css"
-        case "js": return "application/javascript"
-        case "html", "htm": return "text/html"
-        case "png": return "image/png"
-        case "jpg", "jpeg": return "image/jpeg"
-        case "gif": return "image/gif"
-        case "svg": return "image/svg+xml"
-        case "webp": return "image/webp"
-        case "ico": return "image/x-icon"
-        case "woff": return "font/woff"
-        case "woff2": return "font/woff2"
-        case "ttf": return "font/ttf"
-        case "json": return "application/json"
-        default: return "application/octet-stream"
-        }
+    public static func mimeType(for pathExtension: String) -> String {
+        MarkdownResourceLocator.mimeType(for: pathExtension)
     }
 }

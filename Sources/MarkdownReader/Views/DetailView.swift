@@ -1,6 +1,7 @@
 import SwiftUI
 import MarkdownReaderKit
 import WebKit
+import OSLog
 
 /// 仅绘制左侧边缘（含圆角）的 Shape，用于左边框描边
 struct LeftEdgeShape: Shape {
@@ -78,7 +79,8 @@ struct DetailView: View {
     /// Raw→Rendered 过渡状态机：begin 时 Raw 保持可见（挡住 WebView 中间状态），track
     /// 记录真实目标世代，completeIfMatching 在目标渲染完成时让 Raw 退场露出 WebView。
     /// Rendered→Raw 及 DetailView 消失时 cancel。详见 `RenderedModeTransitionState`。
-   @State private var renderedTransition = RenderedModeTransitionState()
+    private let logger = Logger(subsystem: "com.markdownreader.app", category: "RenderTransition")
+    @State private var renderedTransition = RenderedModeTransitionState()
    @State private var rawScrollAnchorToTransfer: SourceScrollAnchor?
    @State private var renderedScrollAnchorToTransfer: SourceScrollAnchor?
    /// 切换操作主动触发的采样 token。快速 A→B→A 时只接受最后一次。
@@ -89,6 +91,10 @@ struct DetailView: View {
    @State private var rawCaptureRequest: UUID?
    /// 触发 Rendered 主动采样的请求 token。
    @State private var renderedCaptureRequest: UUID?
+
+   /// 渲染失败提示信息与自动隐藏任务
+   @State private var renderErrorMessage: String?
+   @State private var renderErrorDismissTask: Task<Void, Never>?
 
 
     var body: some View {
@@ -107,7 +113,12 @@ struct DetailView: View {
                             .padding(4)
                     }
                 }
+                .overlay(alignment: .top) {
+                    renderErrorOverlay
+                }
+                .animation(.easeInOut(duration: 0.2), value: renderErrorMessage)
         }
+
         .background(themeColors.surface, in: .rect(
             topLeadingRadius: 10,
             bottomLeadingRadius: 10,
@@ -397,6 +408,41 @@ struct DetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var renderErrorOverlay: some View {
+        if let errorMsg = renderErrorMessage {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(themeColors.danger)
+                Text(errorMsg)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(themeColors.ink)
+                Spacer()
+                Button {
+                    withAnimation { renderErrorMessage = nil }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(themeColors.fgMuted)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(themeColors.surface)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(themeColors.border, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+            .padding(.top, 10)
+            .padding(.horizontal, 24)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+
+
     // MARK: - 文档内容（带大纲分栏）
 
     @ViewBuilder
@@ -650,7 +696,7 @@ struct DetailView: View {
                     destination: .rendered,
                     contentVersion: documentViewModel.contentVersion
                 )
-                renderedTransition.acknowledgeTransfer()
+                renderedTransition.acknowledgeTransfer(id: id)
             },
           captureSourceScrollAnchor: { anchor in
                renderedScrollAnchorToTransfer = anchor
@@ -672,6 +718,12 @@ struct DetailView: View {
             onRenderGenerationCompleted: { generation in
                 // 仅匹配当前目标世代的完成回调才结束过渡，露出 WebView。
                 renderedTransition.completeIfMatching(generation: generation)
+            },
+            onRenderGenerationFailed: { generation, reason in
+                handleRenderFailed(generation: generation, reason: reason)
+            },
+            onScrollTransferFailed: { id in
+                handleScrollTransferFailed(id)
             },
            exportedPage: $exportedPage
        )
@@ -799,10 +851,59 @@ struct DetailView: View {
                 renderedTransition.cancel()
             }
         }
-        .onChange(of: documentViewModel.currentFileURL) { _, _ in invalidateCopyFeedback() }
+        .onChange(of: documentViewModel.currentFileURL) { _, _ in
+            invalidateCopyFeedback()
+            renderErrorMessage = nil
+            renderErrorDismissTask?.cancel()
+        }
         // 总开关关闭：立即取消五秒任务并清除对号，避免关闭再开启后复活旧成功态。
         .onChange(of: settings.enableDocumentCopy) { _, _ in invalidateCopyFeedback() }
     }
+
+    private func handleRenderFailed(generation: UInt, reason: String) {
+        guard documentViewModel.displayMode == .rendered,
+              renderedTransition.keepsRawVisible else {
+            logger.notice("Render failure ignored: not in rendered transition (generation: \(generation), reason: \(reason, privacy: .public))")
+            return
+        }
+        if renderedTransition.failIfMatching(generation: generation) {
+            documentViewModel.switchDisplayMode(.raw)
+            logger.error("Render generation \(generation) failed with reason: \(reason, privacy: .public); reverted to raw mode")
+            showRenderErrorBanner(message: L10n.tr(.renderFailed, language: language))
+        } else {
+            logger.notice("Ignored expired render failure for generation \(generation) (reason: \(reason, privacy: .public))")
+        }
+    }
+
+    private func handleScrollTransferFailed(_ id: UUID) {
+        guard documentViewModel.displayMode == .rendered,
+              renderedTransition.keepsRawVisible else {
+            logger.notice("Scroll transfer failure ignored: not in rendered transition (transfer: \(id.uuidString, privacy: .public))")
+            return
+        }
+        if renderedTransition.failTransferIfMatching(id: id) {
+            documentViewModel.cancelScrollTransfer(id: id)
+            documentViewModel.switchDisplayMode(.raw)
+            logger.error("Scroll transfer failed or timed out for transfer \(id.uuidString, privacy: .public); reverted to raw mode")
+            showRenderErrorBanner(message: L10n.tr(.renderFailed, language: language))
+        } else {
+            logger.notice("Ignored expired or mismatched scroll transfer failure for transfer \(id.uuidString, privacy: .public)")
+        }
+    }
+
+    private func showRenderErrorBanner(message: String) {
+        renderErrorDismissTask?.cancel()
+        renderErrorMessage = message
+        renderErrorDismissTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            if !Task.isCancelled {
+                withAnimation {
+                    self.renderErrorMessage = nil
+                }
+            }
+        }
+    }
+
 
    /// 把 find/reload/exportPDF handler 注册到注入的本窗口命令目标上。
    private func handleDisplayModeSwitch(_ newValue: DisplayMode) {
@@ -835,7 +936,10 @@ private func handleAnchorCaptured(_ anchor: SourceScrollAnchor, token: UUID, for
          pending == destination,
          let currentToken = captureToken,
          currentToken == token else { return }
-    documentViewModel.beginScrollTransfer(destination: destination, anchor: anchor)
+    let transfer = documentViewModel.beginScrollTransfer(destination: destination, anchor: anchor)
+    if destination == .rendered {
+        renderedTransition.setTargetTransferId(transfer.id)
+    }
     captureToken = nil
     pendingModeSwitch = nil
 }
