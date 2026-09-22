@@ -14,6 +14,21 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.4.6] - 2026-09-22
+
+### 修复
+
+- **v2.4.5 静态资源 404 与模式切换假死 (P0)**：
+  - 修复现代 SwiftPM 资源包嵌套目录（`MarkdownReader_MarkdownReader.bundle/Contents/Resources/Resources`）下静态资源（CSS/JS/字体）查找失败返回 404 导致默认无样式字体的问题。
+  - 实现统一资源定位器 `MarkdownResourceLocator`，供主应用、Quick Look 扩展及 PDF 导出复用，兼容现代嵌套布局与旧平铺布局，支持宿主 App 探测。
+  - 完善模式切换渲染失败出口：区分“页面加载完成”与“渲染实际就绪”，渲染失败或滚动交接超时（1500ms）时明确退出遮罩，将模式回退为编辑模式，保留未保存内容、选择及撤销栈，并在顶部显示可重试的错误提示 Banner。
+  - 健全打包与发布门禁：在 `build-app.sh` 与 `release-local.sh` 中增加静态资源完整性及 WebKit 真实运行冒烟测试（`scripts/verify-render-resources.swift`），修正 Quick Look Extension 的编译目标与 Mermaid 资源裁剪路径。
+
+### 测试
+
+- 全部 311 个测试通过。资源定位覆盖嵌套/平铺 bundle、空格与中文路径、扩展只读自己的资源、显式搜索目录不回退 bundle。模式切换覆盖过期交接失败，以及交接 ID 尚未绑定时不能拆掉当前过渡。
+- 打包门禁会编译生产 `MarkdownResourceLocator` / `MarkdownURLSchemeHandler`，对移出仓库的 `.app` 做 WebPage 冒烟（字体、正文间距、正文替换、滚动回执）。点按模式按钮的完整界面验收仍需在本机打包应用上人工确认。
+
 ## [2.4.5] - 2026-09-18
 
 ### 修复
