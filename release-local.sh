@@ -30,10 +30,10 @@ if ! grep -q "\\[$VERSION\\]" CHANGELOG.md 2>/dev/null && ! grep -q "\\[$TAG\\]"
 fi
 echo "✅ CHANGELOG.md 已包含版本 $VERSION"
 
-# 1. 本地构建 + 签名
+# 1. 本地构建 + 签名（显式传入版本，避免打 tag 前仍写入旧 git tag）
 echo ""
 echo "🔨 本地构建 ${APP_NAME}..."
-./build-app.sh --release --sign
+./build-app.sh --release --sign --version "$VERSION"
 
 # 2. 创建 DMG
 echo ""
@@ -89,10 +89,9 @@ codesign --verify --deep --strict "${APP_NAME}.app" 2>&1
 echo "✅ 签名验证通过"
 echo "🧪 运行渲染资源门禁验证..."
 VERIFY_BIN="$(dirname "$0")/scripts/.verify-render-resources-bin"
-if [ ! -f "$VERIFY_BIN" ] || [ "$(dirname "$0")/scripts/verify-render-resources.swift" -nt "$VERIFY_BIN" ] || [ "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" -nt "$VERIFY_BIN" ] || [ "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift" -nt "$VERIFY_BIN" ]; then
+if [ ! -f "$VERIFY_BIN" ] || [ "$(dirname "$0")/scripts/verify-render-resources.swift" -nt "$VERIFY_BIN" ] || [ "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" -nt "$VERIFY_BIN" ]; then
     swiftc -parse-as-library \
         "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" \
-        "$(dirname "$0")/Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift" \
         "$(dirname "$0")/scripts/verify-render-resources.swift" \
         -o "$VERIFY_BIN"
 fi

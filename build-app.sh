@@ -1,33 +1,38 @@
 #!/bin/bash
 # 构建 MarkdownReader.app (Apple Silicon / arm64 only)
-# 用法: ./build-app.sh [-r|--release] [-s|--sign [IDENTITY]] [-d|--distribution]
+# 用法: ./build-app.sh [-r|--release] [-s|--sign [IDENTITY]] [-d|--distribution] [--output PATH.app] [--version X.Y.Z]
 #   --sign       签名 .app（非分发模式自动使用 ad-hoc 签名，可分享给他人）
 #   --sign ID    分发模式下使用指定签名身份（如 "Developer ID Application: xxx"）
 #   -d           分发模式：启用 hardened runtime + timestamp（需 Developer ID 证书 + 公证）
+#   --version    显式写入 Info.plist 版本（发布脚本在打 tag 前必须传入，避免沿用旧 tag）
 
 set -euo pipefail
 
 APP_NAME="MarkdownReader"
-
-# 动态读取版本号（优先级：git tag > CHANGELOG.md > 兜底）
-if VERSION=$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null | sed 's/^v//'); then
-    echo "📌 版本号来自 git tag: $VERSION"
-elif VERSION=$(grep -m1 -o '\[[0-9][0-9.]*\]' CHANGELOG.md 2>/dev/null | tr -d '[]'); then
-    echo "📌 版本号来自 CHANGELOG.md: $VERSION"
-else
-    VERSION="0.0.0-dev"
-    echo "⚠️  未找到 git tag 或 CHANGELOG.md，使用兜底版本: $VERSION"
-fi
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$PROJECT_DIR"
+
+VERSION=""
+VERSION_SOURCE=""
 CONFIG="debug"
 SIGN_IDENTITY=""
 DISTRIBUTION=false
 ARCH="arm64"
+APP_BUNDLE="${PROJECT_DIR}/${APP_NAME}.app"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         -r|--release) CONFIG="release" ;;
         -d|--distribution) DISTRIBUTION=true ;;
+        --output)
+            APP_BUNDLE="${2:?--output requires an app path}"
+            shift
+            ;;
+        --version)
+            VERSION="${2:?--version requires a semver like 2.4.7}"
+            VERSION_SOURCE="cli"
+            shift
+            ;;
         -s|--sign)
             if [[ $# -gt 1 && ! "$2" =~ ^- ]]; then
                 SIGN_IDENTITY="$2"
@@ -41,31 +46,51 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-echo "🔨 构建 ${APP_NAME} (${CONFIG}, ${ARCH})..."
-
-swift build -c "$CONFIG" --arch arm64 --target MarkdownReader --target MarkdownReaderQL
-
-BUILD_DIR="$(swift build -c "$CONFIG" --arch arm64 --show-bin-path)"
-OBJECT_DIR="${PROJECT_DIR}/.build/${ARCH}-apple-macosx/${CONFIG}"
-
-# 修补 SPM 生成的 resource_bundle_accessor.swift
-# SPM 使用 Bundle.main.bundleURL 查找 bundle，但 macOS .app 的资源在 Contents/Resources/
-# 需要替换为 Bundle.main.resourceURL，使 Bundle.module 能在正确路径找到资源 bundle
-PATCHED=0
-while IFS= read -r accessor; do
-    if grep -q 'Bundle\.main\.bundleURL\.appendingPathComponent' "$accessor"; then
-        sed -i '' 's/Bundle\.main\.bundleURL\.appendingPathComponent/(Bundle.main.resourceURL ?? Bundle.main.bundleURL).appendingPathComponent/g' "$accessor"
-        PATCHED=$((PATCHED + 1))
-        echo "📝 修补 Bundle.module 路径: $accessor"
+# 版本优先级：--version > git tag > CHANGELOG.md > 兜底
+if [[ -z "$VERSION" ]]; then
+    if VERSION=$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null | sed 's/^v//'); then
+        VERSION_SOURCE="git tag"
+    elif VERSION=$(grep -m1 -o '\[[0-9][0-9.]*\]' CHANGELOG.md 2>/dev/null | tr -d '[]'); then
+        VERSION_SOURCE="CHANGELOG.md"
+    else
+        VERSION="0.0.0-dev"
+        VERSION_SOURCE="fallback"
     fi
-done < <(find "${OBJECT_DIR}" -name "resource_bundle_accessor.swift" -type f 2>/dev/null)
-
-if [[ "$PATCHED" -gt 0 ]]; then
-    echo "🔨 重新编译（应用 Bundle.module 修补）..."
-    swift build -c "$CONFIG" --arch arm64 --target MarkdownReader --target MarkdownReaderQL
+fi
+if [[ "$VERSION_SOURCE" == "cli" ]]; then
+    echo "📌 版本号来自 --version: $VERSION"
+elif [[ "$VERSION_SOURCE" == "fallback" ]]; then
+    echo "⚠️  未找到 git tag 或 CHANGELOG.md，使用兜底版本: $VERSION"
+else
+    echo "📌 版本号来自 ${VERSION_SOURCE}: $VERSION"
 fi
 
-APP_BUNDLE="${PROJECT_DIR}/${APP_NAME}.app"
+echo "🔨 构建 ${APP_NAME} (${CONFIG}, ${ARCH})..."
+
+# 每次打包独立构建，禁止借用日常 swift run 或历史 native/Swift Build 缓存。
+mkdir -p "${PROJECT_DIR}/.build"
+PACKAGE_BUILD_DIR="$(mktemp -d "${PROJECT_DIR}/.build/packaging-XXXXXX")"
+ISOLATED_DIR=""
+cleanup() {
+    rm -rf "$PACKAGE_BUILD_DIR"
+    if [[ -n "$ISOLATED_DIR" ]]; then rm -rf "$ISOLATED_DIR"; fi
+}
+trap cleanup EXIT
+BUILD_ARGS=(-c "$CONFIG" --arch "$ARCH" --scratch-path "$PACKAGE_BUILD_DIR")
+# --target 不是可重复参数；主产品必须独立构建并链接，QL 单独编译。
+swift build "${BUILD_ARGS[@]}" --product "$APP_NAME"
+swift build "${BUILD_ARGS[@]}" --target MarkdownReaderQL
+BUILD_DIR="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
+if [[ ! -x "${BUILD_DIR}/${APP_NAME}" ]]; then
+    echo "❌ 本次构建未生成主程序: ${BUILD_DIR}/${APP_NAME}"
+    exit 1
+fi
+if [[ "$APP_BUNDLE" != *.app ]]; then
+    echo "❌ --output 必须指向 .app"
+    exit 1
+fi
+mkdir -p "$(dirname "$APP_BUNDLE")"
+APP_BUNDLE="$(cd "$(dirname "$APP_BUNDLE")" && pwd)/$(basename "$APP_BUNDLE")"
 
 # 清理旧的
 rm -rf "$APP_BUNDLE"
@@ -87,16 +112,6 @@ if [ -d "${BUILD_DIR}/${APP_NAME}_MarkdownReader.bundle" ]; then
     cp -R "${BUILD_DIR}/${APP_NAME}_MarkdownReader.bundle" "$APP_BUNDLE/Contents/Resources/"
 
     SPM_BUNDLE="${APP_BUNDLE}/Contents/Resources/${APP_NAME}_MarkdownReader.bundle"
-
-    # 同步源码目录中最新的 Resources 文件，防止 SPM 增量构建缓存导致资源文件未被及时重新打包
-    if [ -d "${PROJECT_DIR}/Sources/${APP_NAME}/Resources" ]; then
-        if [ -d "${SPM_BUNDLE}/Contents/Resources/Resources" ]; then
-            cp -R "${PROJECT_DIR}/Sources/${APP_NAME}/Resources/" "${SPM_BUNDLE}/Contents/Resources/Resources/"
-        fi
-        if [ -d "${SPM_BUNDLE}/Resources" ]; then
-            cp -R "${PROJECT_DIR}/Sources/${APP_NAME}/Resources/" "${SPM_BUNDLE}/Resources/"
-        fi
-    fi
 
     for icon_dir in "${SPM_BUNDLE}/Assets.xcassets/AppIcon.appiconset" \
                     "${SPM_BUNDLE}/Contents/Resources/Assets.xcassets/AppIcon.appiconset"; do
@@ -198,26 +213,30 @@ mkdir -p "${QL_APPEX}/Contents/Resources"
 CLANG=$(xcrun -f clang)
 SDK=$(xcrun --show-sdk-path)
 
-QL_OBJECTS="${OBJECT_DIR}/${QL_EXT_NAME}.build"
-KIT_OBJECTS="${OBJECT_DIR}/MarkdownReaderKit.build"
+# Swift Build 输出每个 target 的合并 .o，旧 native 后端输出 target.build/*.o。
+# 两者都只从本次 --show-bin-path 取对象，不回退其他 .build 目录。
+QL_LINK_OBJECTS=()
+if [[ -f "${BUILD_DIR}/${QL_EXT_NAME}.o" ]]; then
+    for target in "$QL_EXT_NAME" MarkdownReaderKit Markdown cmark-gfm cmark-gfm-extensions CAtomic; do
+        obj="${BUILD_DIR}/${target}.o"
+        if [[ ! -s "$obj" ]]; then echo "❌ 缺少本次构建对象: $obj"; exit 1; fi
+        QL_LINK_OBJECTS+=("$obj")
+    done
+else
+    for target in "$QL_EXT_NAME" MarkdownReaderKit Markdown cmark_gfm cmark_gfm_extensions CAtomic; do
+        objects=("${BUILD_DIR}/${target}.build/"*.o)
+        if [[ ! -s "${objects[0]}" ]]; then
+            echo "❌ 缺少本次构建对象: ${BUILD_DIR}/${target}.build"
+            exit 1
+        fi
+        QL_LINK_OBJECTS+=("${objects[@]}")
+    done
+fi
 
-# 收集所有依赖的 .o 文件（cmark_gfm, cmark_gfm_extensions, CAtomic, Markdown）
-DEP_OBJS=()
-for dep_dir in "${OBJECT_DIR}/cmark_gfm.build" \
-               "${OBJECT_DIR}/cmark_gfm_extensions.build" \
-               "${OBJECT_DIR}/CAtomic.build" \
-               "${OBJECT_DIR}/Markdown.build"; do
-    if [ -d "$dep_dir" ]; then
-        for obj in "$dep_dir"/*.o; do
-            [ -f "$obj" ] && DEP_OBJS+=("$obj")
-        done
-    fi
-done
-
-if [ -d "$QL_OBJECTS" ] && [ -d "$KIT_OBJECTS" ]; then
+if [[ ${#QL_LINK_OBJECTS[@]} -gt 0 ]]; then
     echo "🔧 链接 Quick Look Extension (entry: NSExtensionMain)..."
     SWIFT_LIB_DIR="$(xcrun -f swiftc 2>/dev/null | xargs dirname)/../lib/swift/macosx"
-    "$CLANG" -arch arm64 \
+    "$CLANG" -arch "$ARCH" -mmacosx-version-min=26.0 \
         -e _NSExtensionMain \
         -u _NSExtensionMain \
         -isysroot "$SDK" \
@@ -225,9 +244,7 @@ if [ -d "$QL_OBJECTS" ] && [ -d "$KIT_OBJECTS" ]; then
         -framework Foundation -framework CoreFoundation \
         -framework SwiftUI -framework UniformTypeIdentifiers \
         -o "$QL_BINARY" \
-        "${QL_OBJECTS}/"*.o \
-        "${KIT_OBJECTS}/"*.o \
-        "${DEP_OBJS[@]}" \
+        "${QL_LINK_OBJECTS[@]}" \
         -rpath @executable_path/../Frameworks \
         -rpath /usr/lib/swift \
         -L "${BUILD_DIR}" \
@@ -258,7 +275,7 @@ if [ -d "$QL_OBJECTS" ] && [ -d "$KIT_OBJECTS" ]; then
         exit 1
     fi
 else
-    echo "❌ 未找到 Extension 目标文件: $QL_OBJECTS"
+    echo "❌ 未找到本次构建的 Extension 目标文件"
     exit 1
 fi
 
@@ -372,11 +389,10 @@ fi
 echo ""
 echo "🧪 运行渲染资源门禁验证..."
 VERIFY_BIN="${PROJECT_DIR}/scripts/.verify-render-resources-bin"
-if [ ! -f "$VERIFY_BIN" ] || [ "${PROJECT_DIR}/scripts/verify-render-resources.swift" -nt "$VERIFY_BIN" ] || [ "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" -nt "$VERIFY_BIN" ] || [ "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift" -nt "$VERIFY_BIN" ]; then
+if [ ! -f "$VERIFY_BIN" ] || [ "${PROJECT_DIR}/scripts/verify-render-resources.swift" -nt "$VERIFY_BIN" ] || [ "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" -nt "$VERIFY_BIN" ]; then
     echo "🔨 编译渲染资源门禁验证工具..."
     swiftc -parse-as-library \
         "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift" \
-        "${PROJECT_DIR}/Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift" \
         "${PROJECT_DIR}/scripts/verify-render-resources.swift" \
         -o "$VERIFY_BIN"
 fi

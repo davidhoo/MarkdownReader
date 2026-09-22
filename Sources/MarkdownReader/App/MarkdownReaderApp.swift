@@ -2,7 +2,6 @@ import SwiftUI
 import MarkdownReaderKit
 import WebKit
 
-@main
 struct MarkdownReaderApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate

@@ -1,24 +1,19 @@
 import Foundation
-import WebKit
-import AppKit
 
 // MARK: - 资源门禁验证工具
 // 编译方法:
-// swiftc -parse-as-library Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift Sources/MarkdownReaderKit/Services/MarkdownURLSchemeHandler.swift scripts/verify-render-resources.swift -o scripts/.verify-render-resources-bin
+// swiftc -parse-as-library Sources/MarkdownReaderKit/Services/MarkdownResourceLocator.swift scripts/verify-render-resources.swift -o scripts/.verify-render-resources-bin
 // 用法: scripts/.verify-render-resources-bin <MarkdownReader.app 路径>
 //
 // 验证内容：
 // 1. 静态清单门禁：调用生产环境 MarkdownResourceLocator，检查主应用与 QL 扩展中必需 CSS、JS、Prism、KaTeX、字体及 Mermaid。
 // 2. 裁剪验证：确认 QL 扩展未打包冗余 Mermaid。
-// 3. WebPage 运行时冒烟：通过真实 WebPage + 生产 MarkdownURLSchemeHandler(hostBundle: appBundle)，
-//    验证 computed font、.markdown-preview computed padding、window.MR 入口、MR.replaceContent 正文替换、
-//    真实 MR.scrollToSourceScrollAnchor 滚动回执，以及 MR.captureSourceScrollAnchor 锚点采集。
+// 3. 通过 open -n 启动待验收 .app 的自检入口，验证它实际链接的渲染代码。
+//    此工具只检查资源清单及主程序回执，不编译另一份 WebPage/handler 替代主程序。
 
 @main
 struct VerifyRenderResources {
     static func main() async {
-        _ = NSApplication.shared
-
         guard CommandLine.arguments.count > 1 else {
             fputs("❌ 缺少参数：请提供待验证的 .app 路径\n用法: verify-render-resources <path/to/MarkdownReader.app>\n", stderr)
             exit(1)
@@ -131,114 +126,69 @@ struct VerifyRenderResources {
             print("   ✅ Quick Look Extension 裁剪验证通过")
         }
 
-        // MARK: - 3. WebPage 运行时真实冒烟验证
+        // MARK: - 3. 启动待发布的实际主程序，而不是用验证器的代码渲染资源
 
-        print("🌐 执行真实 WebPage + MarkdownURLSchemeHandler 运行时冒烟验证...")
-
-        let scheme = URLScheme("mr")!
-        let handler = MarkdownURLSchemeHandler(baseURL: nil, hostBundle: appBundle)
-        var config = WebPage.Configuration()
-        config.urlSchemeHandlers[scheme] = handler
-        let page = WebPage(configuration: config)
-
-        let html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>:root { --content-padding: 20px; }</style>
-            <link rel="stylesheet" href="mr:///css/markdown.css">
-            <link rel="stylesheet" href="mr:///css/scroll.css">
-            <script src="mr:///js/markdown-reader.js"></script>
-        </head>
-        <body>
-            <div class="markdown-preview" id="mr-content">
-                <h1 id="title" data-source-start="1" data-source-end="1">Verification Document</h1>
-                <p data-source-start="2" data-source-end="4">Verification paragraph line.</p>
-            </div>
-        </body>
-        </html>
-        """
-
-        _ = page.load(html: html, baseURL: URL(string: "mr://localhost/")!)
-
-        var smokeSuccess = false
-        var failureReason: String?
-
-        for _ in 0..<30 {
-            try? await Task.sleep(for: .milliseconds(100))
-
-            let js = """
-            return (() => {
-                if (typeof window.MR !== "object" || window.MR === null) {
-                    return { ready: false, reason: "missing_mr" };
-                }
-                if (typeof window.MR.replaceContent !== "function") {
-                    return { ready: false, reason: "missing_replaceContent" };
-                }
-                if (typeof window.MR.scrollToSourceScrollAnchor !== "function") {
-                    return { ready: false, reason: "missing_scrollToSourceScrollAnchor" };
-                }
-                if (typeof window.MR.captureSourceScrollAnchor !== "function") {
-                    return { ready: false, reason: "missing_captureSourceScrollAnchor" };
-                }
-
-                const bodyStyle = window.getComputedStyle(document.body);
-                const bodyFont = bodyStyle.fontFamily || "";
-                if (bodyFont.indexOf("-apple-system") === -1) {
-                    return { ready: false, reason: "fallback_font: " + bodyFont };
-                }
-
-                const preview = document.querySelector('.markdown-preview');
-                const pad = preview ? window.getComputedStyle(preview).paddingLeft : "";
-                if (pad === "0px" || pad === "") {
-                    return { ready: false, reason: "zero_padding: " + pad };
-                }
-
-                const replaceOk = window.MR.replaceContent('<p id="replaced">Replaced Paragraph</p>');
-                if (replaceOk !== true) {
-                    return { ready: false, reason: "replaceContent_failed" };
-                }
-
-                return { ready: true, bodyFont: bodyFont, pad: pad };
-            })()
-            """
-
-            do {
-                if let result = try await page.callJavaScript(js) as? [String: Any],
-                   result["ready"] as? Bool == true {
-                    // 验证滚动定位与回执
-                    let scrollJS = "return await MR.scrollToSourceScrollAnchor(1, 0)"
-                    let scrollReceipt = try await page.callJavaScript(scrollJS)
-                    let scrollOk = (scrollReceipt as? Bool) ?? ((scrollReceipt as? Int) == 1)
-                    guard scrollOk else {
-                        failureReason = "MR.scrollToSourceScrollAnchor returned false"
-                        break
-                    }
-
-                    // 验证锚点采集
-                    let anchorJS = "return MR.captureSourceScrollAnchor()"
-                    guard let anchorDict = try await page.callJavaScript(anchorJS) as? [String: Any],
-                          let pos = anchorDict["sourcePosition"] as? Double, pos >= 1 else {
-                        failureReason = "MR.captureSourceScrollAnchor failed to return valid anchor"
-                        break
-                    }
-
-                    smokeSuccess = true
-                    break
-                }
-            } catch {
-                failureReason = "JavaScript execution error: \(error)"
-            }
-        }
-
-        guard smokeSuccess else {
-            fputs("❌ WebPage 冒烟测试未通过: \(failureReason ?? "超时未就绪")\n", stderr)
+        let argument = "--verify-packaged-render"
+        // 旧程序没有自检入口，拒绝启动，避免它忽略参数后打开用户文档或修改偏好。
+        guard let executableURL = appBundle.executableURL,
+              let executable = try? Data(contentsOf: executableURL),
+              executable.range(of: Data(argument.utf8)) != nil else {
+            fputs("❌ 主程序缺少打包自检入口，可能混入了旧二进制\n", stderr)
             exit(1)
         }
 
-        print("   ✅ WebPage 冒烟验证通过（CSS 字体生效、20px 边距生效、MR 对象就绪、正文替换成功、滚动定位与锚点采集回执正常）")
-        print("🎉 打包产物所有渲染资源门禁验证通过！")
-        exit(0)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mr-packaged-verification-" + UUID().uuidString)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            fputs("❌ 无法创建自检回执目录: \(error)\n", stderr)
+            exit(1)
+        }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let reportURL = directory.appendingPathComponent("result.json")
+        let nonce = UUID().uuidString
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-n", "-g", "-W", appURL.path, "--args", argument, reportURL.path, nonce]
+        process.currentDirectoryURL = directory
+        print("🌐 启动打包主程序执行渲染自检: \(appURL.path)")
+        do {
+            try process.run()
+            for _ in 0..<300 {
+                // LaunchServices 的 open 可能先退出；以主程序的原子回执为完成边界。
+                if FileManager.default.fileExists(atPath: reportURL.path) { break }
+                if !process.isRunning && process.terminationStatus != 0 {
+                    throw VerificationError(message: "无法启动打包主程序（open: \(process.terminationStatus)）")
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            guard FileManager.default.fileExists(atPath: reportURL.path) else {
+                if process.isRunning { process.terminate() }
+                throw VerificationError(message: "打包主程序自检超时")
+            }
+            guard let data = try? Data(contentsOf: reportURL),
+                  let report = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  report["schemaVersion"] as? Int == 1,
+                  report["nonce"] as? String == nonce,
+                  report["bundlePath"] as? String == appURL.resolvingSymlinksInPath().path else {
+                throw VerificationError(message: "未收到当前打包主程序的有效自检回执")
+            }
+            guard report["success"] as? Bool == true else {
+                throw VerificationError(message: report["error"] as? String ?? "渲染自检失败")
+            }
+            print("   ✅ 打包主程序自检通过: \(report["metrics"] ?? [:])")
+        } catch {
+            fputs("❌ \(error)\n", stderr)
+            // exit 不运行 defer，显式清理失败回执目录。
+            try? FileManager.default.removeItem(at: directory)
+            exit(1)
+        }
+        print("🎉 打包产物资源清单与实际主程序渲染均通过验证")
+    }
+
+    private struct VerificationError: Error, CustomStringConvertible {
+        let message: String
+        var description: String { message }
     }
 }
