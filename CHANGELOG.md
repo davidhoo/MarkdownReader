@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **发布流程强制同步 Homebrew Tap**：`./release-local.sh` 在 GitHub Release 公开后自动更新 `davidhoo/homebrew-markdownreader` 的 Cask `version`/`sha256` 并回读校验；同步失败则整次发布失败。正式发版不得只发 GitHub Release。说明见 `docs/homebrew-tap-maintenance.md`。
+
 ### 已知遗留（后续处理）
 
 - `ContentView.handleDeletedFileWithUnsavedChanges` 仍用 `NSAlert.runModal()`（应用级 modal，多窗口下阻塞所有窗口）；Save/SaveAs/ExportPDF 面板已改窗口级 sheet，但文件被外部删除的未保存确认 alert 尚未统一，待改为 `beginSheetModal(for: window)`

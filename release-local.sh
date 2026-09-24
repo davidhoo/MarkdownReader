@@ -143,8 +143,18 @@ else
         "$ZIP_NAME"
 fi
 
+# 6. GitHub Release 公开后必须同步 Homebrew Tap（硬性步骤，失败则整体失败）
+echo ""
+echo "🍺 同步 Homebrew Cask（davidhoo/homebrew-markdownreader）..."
+DMG_SHA256="$(shasum -a 256 "$DMG_NAME" | awk '{print $1}')"
+# shellcheck source=scripts/homebrew-cask-sync.sh
+source "$(cd "$(dirname "$0")" && pwd)/scripts/homebrew-cask-sync.sh"
+homebrew_cask_sync "$VERSION" "$DMG_SHA256"
+echo "✅ Homebrew Cask 已同步到 v${VERSION}（sha256=${DMG_SHA256}）"
+
 echo ""
 echo "🎉 发布完成！"
 echo "   DMG: $DMG_NAME ($(du -h "$DMG_NAME" | cut -f1))"
 echo "   ZIP: $ZIP_NAME ($(du -h "$ZIP_NAME" | cut -f1))"
 echo "   Release: https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/releases/tag/$TAG"
+echo "   Homebrew: brew update && brew upgrade --cask --greedy markdownreader"

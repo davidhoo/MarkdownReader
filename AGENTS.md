@@ -113,8 +113,9 @@ swift test
 # 打包 DMG — arm64 only
 ./package.sh
 
-# 本地发布到 GitHub
-./release-local.sh
+# 本地发布到 GitHub（含 Homebrew Tap 同步，缺一不可）
+./release-local.sh X.Y.Z
+# 详见 docs/homebrew-tap-maintenance.md：正式发版后必须更新 davidhoo/homebrew-markdownreader
 ```
 
 ## 依赖
@@ -170,8 +171,9 @@ swift test
 
 GitHub Actions (`.github/workflows/release.yml`)：
 - 触发：版本 tag (`v*`) 或手动 dispatch
-- 流程：构建 → 组装 .app → ad-hoc 签名 → 创建 DMG → 发布 GitHub Release
+- 流程：构建 → 组装 .app → 签名 → 创建 DMG/ZIP → 发布 GitHub Release → **同步 `davidhoo/homebrew-markdownreader` Cask**（`release-local.sh` 内置，失败则整次发布失败）
 - 发布前需确认 CHANGELOG.md 包含对应版本号
+- 硬性要求：每次正式发版都必须更新 Homebrew Tap；只发 GitHub Release 不算完成。维护说明见 `docs/homebrew-tap-maintenance.md`
 
 ## 已知注意事项
 
