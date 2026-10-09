@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **目录符号链接可按文件夹浏览**：文件夹里的目录符号链接不再显示成文件。扫描会跟随链接列出目标内容，节点路径仍保留链接名；指回祖先的链接环停止展开，无权限的目标保留为目录且不让整棵树失败。
+- **目录链接目标自动刷新**：同时监听根目录之外的真实目标，目标内新增、删除、重命名文件会更新目录树；链接改指后更新监控范围，关闭目录时清理所有监控。
+
 ### 变更
 
 - **发布流程强制同步 Homebrew Tap**：`./release-local.sh` 在 GitHub Release 公开后自动更新 `davidhoo/homebrew-markdownreader` 的 Cask `version`/`sha256` 并回读校验；同步失败则整次发布失败。正式发版不得只发 GitHub Release。说明见 `docs/homebrew-tap-maintenance.md`。

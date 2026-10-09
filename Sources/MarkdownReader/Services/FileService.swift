@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// 文件系统服务，负责目录扫描和文件读取
@@ -119,30 +120,39 @@ struct FileService: Sendable {
         showHiddenFiles: Bool = false,
         showNonMarkdownFiles: Bool = true
     ) async throws -> [FileNode] {
-        var options: FileManager.DirectoryEnumerationOptions = [.skipsSubdirectoryDescendants]
-        if !showHiddenFiles {
-            options.insert(.skipsHiddenFiles)
-        }
-
-        let contents = try FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey, .nameKey],
-            options: options
+        try await scanDirectory(
+            directory,
+            showHiddenFiles: showHiddenFiles,
+            showNonMarkdownFiles: showNonMarkdownFiles,
+            ancestors: []
         )
+    }
+
+    /// 递归扫描。目录符号链接按目标类型展开；节点 path 仍保留链接本身，便于在树中显示链接名。
+    /// `ancestors` 记录当前路径上已进入的真实目录，避免链接环无限递归。
+    /// 指回祖先的链接显示为空目录。无法读取的目标（权限不足等）同样保留为目录节点，不让整棵树失败。
+    private func scanDirectory(
+        _ directory: URL,
+        showHiddenFiles: Bool,
+        showNonMarkdownFiles: Bool,
+        ancestors: Set<String>
+    ) async throws -> [FileNode] {
+        let contents = try Self.directoryEntries(in: directory, showHiddenFiles: showHiddenFiles)
+
+        var ancestors = ancestors
+        ancestors.insert(Self.canonicalDirectoryPath(directory))
 
         var nodes: [FileNode] = []
 
         for url in contents {
-            let resourceValues = try url.resourceValues(forKeys: [.isDirectoryKey, .nameKey])
-            let isDirectory = resourceValues.isDirectory ?? false
-            let name = resourceValues.name ?? url.lastPathComponent
-            let isTreeMarkdown = Self.isTreeDisplayExtension(url)
+            let name = (try? url.resourceValues(forKeys: [.nameKey]))?.name ?? url.lastPathComponent
 
-            if isDirectory {
-                let children = try await scanDirectory(
+            if Self.isTraversableDirectory(url) {
+                let children = await childrenOfDirectory(
                     url,
                     showHiddenFiles: showHiddenFiles,
-                    showNonMarkdownFiles: showNonMarkdownFiles
+                    showNonMarkdownFiles: showNonMarkdownFiles,
+                    ancestors: ancestors
                 )
                 // 空目录也显示（children 为空数组），以便用户新建空目录后能立即看到
                 let node = FileNode(
@@ -154,6 +164,7 @@ struct FileService: Sendable {
                 nodes.append(node)
             } else {
                 // 如果不显示非 Markdown 文件，则跳过
+                let isTreeMarkdown = Self.isTreeDisplayExtension(url)
                 if !showNonMarkdownFiles && !isTreeMarkdown { continue }
                 let node = FileNode(
                     name: name,
@@ -175,6 +186,50 @@ struct FileService: Sendable {
         }
 
         return nodes
+    }
+
+    /// 读取子目录。链接环和无法列出的目标返回空子节点，调用方仍把它显示为目录。
+    private func childrenOfDirectory(
+        _ url: URL,
+        showHiddenFiles: Bool,
+        showNonMarkdownFiles: Bool,
+        ancestors: Set<String>
+    ) async -> [FileNode] {
+        let resolved = Self.canonicalDirectoryPath(url)
+        if ancestors.contains(resolved) {
+            return []
+        }
+        do {
+            return try await scanDirectory(
+                url,
+                showHiddenFiles: showHiddenFiles,
+                showNonMarkdownFiles: showNonMarkdownFiles,
+                ancestors: ancestors
+            )
+        } catch {
+            return []
+        }
+    }
+
+    /// FSEvents 不跟随目录中的符号链接，需额外监听目录树中的外部真实目录。
+    /// 去掉已被祖先监控递归覆盖的路径，重复链接目标只监听一次。
+    func directoryWatchURLs(root: URL, nodes: [FileNode]) -> [URL] {
+        var paths: Set<String> = [Self.canonicalDirectoryPath(root)]
+        func collect(_ nodes: [FileNode]) {
+            for node in nodes where node.isDirectory {
+                paths.insert(Self.canonicalDirectoryPath(node.path))
+                collect(node.children ?? [])
+            }
+        }
+        collect(nodes)
+
+        var roots: [String] = []
+        for path in paths.sorted(by: { $0.count == $1.count ? $0 < $1 : $0.count < $1.count }) {
+            if !roots.contains(where: { $0 == "/" || path.hasPrefix($0 + "/") }) {
+                roots.append(path)
+            }
+        }
+        return roots.map { URL(fileURLWithPath: $0, isDirectory: true) }
     }
 
     /// 读取文件内容
@@ -217,25 +272,74 @@ struct FileService: Sendable {
     ///   - showHiddenFiles: 是否检查隐藏文件
     /// - Returns: 是否包含 .md 文件
     func directoryContainsMarkdown(_ directory: URL, showHiddenFiles: Bool = false) -> Bool {
-        var options: FileManager.DirectoryEnumerationOptions = []
-        if !showHiddenFiles {
-            options.insert(.skipsHiddenFiles)
-        }
+        directoryContainsMarkdown(directory, showHiddenFiles: showHiddenFiles, ancestors: [])
+    }
 
-        guard let enumerator = FileManager.default.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: options
-        ) else {
+    /// 与目录树相同的符号链接策略：跟随目录链接，遇到已访问真实路径则停止。
+    private func directoryContainsMarkdown(
+        _ directory: URL,
+        showHiddenFiles: Bool,
+        ancestors: Set<String>
+    ) -> Bool {
+        let resolved = Self.canonicalDirectoryPath(directory)
+        if ancestors.contains(resolved) {
+            return false
+        }
+        var ancestors = ancestors
+        ancestors.insert(resolved)
+
+        guard let contents = try? Self.directoryEntries(in: directory, showHiddenFiles: showHiddenFiles) else {
             return false
         }
 
-        for case let url as URL in enumerator {
-            if Self.isKnownMarkdownExtension(url) {
+        for url in contents {
+            if Self.isTraversableDirectory(url) {
+                if directoryContainsMarkdown(url, showHiddenFiles: showHiddenFiles, ancestors: ancestors) {
+                    return true
+                }
+            } else if Self.isKnownMarkdownExtension(url) {
                 return true
             }
         }
         return false
+    }
+
+    /// 列出目录条目，并把路径挂回 `directory`。
+    /// `contentsOfDirectory(at:)` 遇到目录符号链接会返回 ENOTDIR，所以先解析到真实目录再列。
+    /// 返回的 URL 仍以链接路径为前缀，树里显示的是链接名而不是目标路径。
+    private static func directoryEntries(in directory: URL, showHiddenFiles: Bool) throws -> [URL] {
+        var options: FileManager.DirectoryEnumerationOptions = [.skipsSubdirectoryDescendants]
+        if !showHiddenFiles {
+            options.insert(.skipsHiddenFiles)
+        }
+        let listingRoot = URL(fileURLWithPath: canonicalDirectoryPath(directory), isDirectory: true)
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: listingRoot,
+            includingPropertiesForKeys: [.nameKey],
+            options: options
+        )
+        return contents.map { directory.appendingPathComponent($0.lastPathComponent) }
+    }
+
+    /// `resourceValues.isDirectory` 对符号链接返回 false。这里用会跟随链接的 `fileExists`，
+    /// 与打开文件夹时的类型判断一致。断掉的链接返回 false，按文件处理。
+    private static func isTraversableDirectory(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
+    /// 真实目录路径，用作环检测键。`realpath` 会同时消掉符号链接和 `/var`、`/private/var` 这类差异。
+    private static func canonicalDirectoryPath(_ url: URL) -> String {
+        let fallback = url.resolvingSymlinksInPath().standardizedFileURL.path
+        return url.withUnsafeFileSystemRepresentation { representation -> String in
+            guard let representation else { return fallback }
+            var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+            guard realpath(representation, &buffer) != nil else { return fallback }
+            let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+            let path = String(decoding: bytes, as: UTF8.self)
+            return path.isEmpty ? fallback : path
+        }
     }
 
     /// 重命名文件或目录

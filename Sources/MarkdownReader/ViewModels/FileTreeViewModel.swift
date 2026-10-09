@@ -52,6 +52,9 @@ final class FileTreeViewModel {
     /// 是否有待处理的刷新请求
     private var needsRefresh = false
 
+    /// 防止切换或关闭目录后，旧扫描结果重新安装监控。
+    private var directoryGeneration = UUID()
+
     // MARK: - 初始化
 
     init(fileService: FileService = FileService(), settings: SettingsModel = SettingsModel.shared) {
@@ -64,6 +67,10 @@ final class FileTreeViewModel {
     /// 加载目录树
     /// - Parameter directory: 根目录 URL
     func loadDirectory(_ directory: URL) async {
+        directoryGeneration = UUID()
+        let generation = directoryGeneration
+        isRefreshing = false
+        needsRefresh = false
         isLoading = true
         errorMessage = nil
         isEmptyDirectory = false
@@ -77,6 +84,7 @@ final class FileTreeViewModel {
                 showHiddenFiles: settings.showHiddenFiles,
                 showNonMarkdownFiles: settings.showNonMarkdownFiles
             )
+            guard directoryGeneration == generation else { return }
             isEmptyDirectory = !fileService.directoryContainsMarkdown(
                 directory,
                 showHiddenFiles: settings.showHiddenFiles
@@ -94,6 +102,7 @@ final class FileTreeViewModel {
             // 默认展开根目录（显示第一级目录和文件）
             expandedDirs.insert(directory)
         } catch {
+            guard directoryGeneration == generation else { return }
             errorMessage = error.localizedDescription
             nodes = []
         }
@@ -113,6 +122,7 @@ final class FileTreeViewModel {
         }
 
         guard let dir = rootDirectory else { return }
+        let generation = directoryGeneration
 
         // 检查根目录是否仍然存在
         var isDir: ObjCBool = false
@@ -131,6 +141,7 @@ final class FileTreeViewModel {
                 showHiddenFiles: settings.showHiddenFiles,
                 showNonMarkdownFiles: settings.showNonMarkdownFiles
             )
+            guard directoryGeneration == generation else { return }
 
             let rootNode = FileNode(
                 name: dir.lastPathComponent,
@@ -159,7 +170,10 @@ final class FileTreeViewModel {
                 showHiddenFiles: settings.showHiddenFiles
             )
             errorMessage = nil
+            // 链接新增、删除或改指后，以本次扫描得到的真实目录重建监控范围。
+            startWatching(dir)
         } catch {
+            guard directoryGeneration == generation else { return }
             // 刷新失败时不覆盖已有数据，仅记录错误
         }
 
@@ -178,6 +192,7 @@ final class FileTreeViewModel {
     /// - Parameter clearSelection: 是否清除选中状态，默认 true。
     ///   切换单文件模式时传 false，避免 selectedFileURL 瞬时 nil 翻转触发 SelectionChangeModifier。
     func clearDirectory(clearSelection: Bool = true) {
+        directoryGeneration = UUID()
         fileSystemWatcher.stopWatching()
         nodes = []
         expandedDirs = []
@@ -185,6 +200,7 @@ final class FileTreeViewModel {
             selectedFileURL = nil
         }
         errorMessage = nil
+        isLoading = false
         isEmptyDirectory = false
         isRefreshing = false
         needsRefresh = false
@@ -299,7 +315,8 @@ final class FileTreeViewModel {
 
     /// 开始监控目录变化
     private func startWatching(_ directory: URL) {
-        fileSystemWatcher.startWatching(url: directory) { [weak self] in
+        let urls = fileService.directoryWatchURLs(root: directory, nodes: nodes)
+        fileSystemWatcher.startWatching(urls: urls) { [weak self] in
             guard let self else { return }
             Task { @MainActor in
                 await self.refreshDirectory()

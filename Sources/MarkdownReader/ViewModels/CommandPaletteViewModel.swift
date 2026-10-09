@@ -356,13 +356,7 @@ final class CommandPaletteViewModel {
                 }
             } else {
                 guard FileService.isKnownMarkdownExtension(node.path) else { continue }
-                let relativePath: String
-                let resolvedNodePath = node.path.resolvingSymlinksInPath()
-                if resolvedNodePath.path.hasPrefix(resolvedRootDir.path + "/") {
-                    relativePath = String(resolvedNodePath.path.dropFirst(resolvedRootDir.path.count + 1))
-                } else {
-                    relativePath = node.path.lastPathComponent
-                }
+                let relativePath = Self.displayRelativePath(of: node.path, under: rootDir, resolvedRoot: resolvedRootDir)
                 results.append(CommandPaletteFileItem(
                     id: node.path.path,
                     url: node.path,
@@ -374,23 +368,47 @@ final class CommandPaletteViewModel {
         return results
     }
 
+    /// 命令面板显示的相对路径。目录符号链接下的文件保留 `docs/note.md` 这种逻辑路径。
+    /// 根目录本身是符号链接时，退回解析后的路径。
+    private static func displayRelativePath(of url: URL, under rootDir: URL, resolvedRoot: URL) -> String {
+        let rootPath = rootDir.standardizedFileURL.path
+        let urlPath = url.standardizedFileURL.path
+        if urlPath.hasPrefix(rootPath + "/") {
+            return String(urlPath.dropFirst(rootPath.count + 1))
+        }
+        let resolvedURL = url.resolvingSymlinksInPath()
+        if resolvedURL.path.hasPrefix(resolvedRoot.path + "/") {
+            return String(resolvedURL.path.dropFirst(resolvedRoot.path.count + 1))
+        }
+        return url.lastPathComponent
+    }
+
+    /// 文件是否位于当前目录树内。逻辑路径优先，解析后的路径用于根目录本身是符号链接的情况。
+    private static func isInsideDirectoryTree(_ url: URL, rootDir: URL) -> Bool {
+        let rootPath = rootDir.standardizedFileURL.path
+        let urlPath = url.standardizedFileURL.path
+        if urlPath.hasPrefix(rootPath + "/") {
+            return true
+        }
+        let resolvedRoot = rootDir.resolvingSymlinksInPath().path
+        let resolvedURL = url.resolvingSymlinksInPath().path
+        return resolvedURL.hasPrefix(resolvedRoot + "/")
+    }
+
     /// 打开文件
     private func openFile(_ url: URL) {
         guard let appVM = appViewModel,
               let fileTreeVM = fileTreeViewModel else { return }
 
-        // 解析符号链接后再比较路径，确保软链接路径和真实路径都能正确匹配
-        if let rootDir = appVM.rootDirectory {
-            let resolvedURL = url.resolvingSymlinksInPath()
-            let resolvedRootDir = rootDir.resolvingSymlinksInPath()
-            if resolvedURL.path.hasPrefix(resolvedRootDir.path + "/") {
-                // 回归修复：目录内文件复用与目录树点击同一套窗口内导航规则
-                // （requestFileSelection），所有权冲突时激活 owner、不改本窗口选中项。
-                fileTreeVM.onSelectFileViaSession?(url) ?? {
-                    fileTreeVM.selectedFileURL = url
-                }()
-                return
-            }
+        // 先比目录树里的逻辑路径，目录符号链接下的文件仍算当前根目录内。
+        // 再解析符号链接，使根目录本身是链接时，真实路径也能匹配。
+        if let rootDir = appVM.rootDirectory, Self.isInsideDirectoryTree(url, rootDir: rootDir) {
+            // 回归修复：目录内文件复用与目录树点击同一套窗口内导航规则
+            // （requestFileSelection），所有权冲突时激活 owner、不改本窗口选中项。
+            fileTreeVM.onSelectFileViaSession?(url) ?? {
+                fileTreeVM.selectedFileURL = url
+            }()
+            return
         }
         // 不在当前根目录下，通过 Coordinator 路由（外部打开去重）
         coordinator?.enqueue(OpenRequest(url: url, source: .commandPalette, preferredWindowID: windowID))

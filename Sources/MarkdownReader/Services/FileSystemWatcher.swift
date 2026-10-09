@@ -17,8 +17,8 @@ final class FileSystemWatcher: @unchecked Sendable {
     /// 防抖间隔（秒）
     private let debounceInterval: TimeInterval
 
-    /// 当前正在监控的目录 URL
-    private(set) var watchedURL: URL?
+    /// 当前正在监控的目录集合。一个 stream 同时覆盖根目录与外部链接目标。
+    private(set) var watchedURLs: Set<URL> = []
 
     /// 是否已失效（防止 stopWatching 后残余回调访问实例）
     private var isInvalidated = false
@@ -36,16 +36,22 @@ final class FileSystemWatcher: @unchecked Sendable {
     ///   - url: 要监控的目录 URL
     ///   - onChange: 检测到变化时的回调（在主线程执行）
     func startWatching(url: URL, onChange: @escaping @Sendable () -> Void) {
-        // 如果已经在监控同一个目录，只更新回调
-        if let watchedURL = watchedURL, watchedURL == url {
+        startWatching(urls: [url], onChange: onChange)
+    }
+
+    func startWatching(urls: [URL], onChange: @escaping @Sendable () -> Void) {
+        let urls = Set(urls.map { $0.standardizedFileURL })
+        // 刷新未改变监控范围时保留 stream，避免重复重建和取消待处理事件。
+        if stream != nil, watchedURLs == urls {
             self.onChange = onChange
             return
         }
 
         stopWatching()
+        guard !urls.isEmpty else { return }
 
         self.onChange = onChange
-        self.watchedURL = url
+        self.watchedURLs = urls
         self.isInvalidated = false
 
         var context = FSEventStreamContext(
@@ -56,7 +62,7 @@ final class FileSystemWatcher: @unchecked Sendable {
             copyDescription: nil
         )
 
-        let pathsToWatch = [url.path] as CFArray
+        let pathsToWatch = urls.map(\.path).sorted() as CFArray
 
         // kFSEventStreamCreateFlagFileEvents: 接收文件级事件（创建、删除、重命名等）
         // kFSEventStreamCreateFlagUseCFTypes: 事件路径使用 CF 类型
@@ -66,7 +72,7 @@ final class FileSystemWatcher: @unchecked Sendable {
                 guard let info = clientCallBackInfo else { return }
                 let watcher = Unmanaged<FileSystemWatcher>.fromOpaque(info).takeUnretainedValue()
                 // 防止 stopWatching 后残余回调访问已失效的实例
-                guard !watcher.isInvalidated else { return }
+                guard !watcher.isInvalidated, watcher.stream == streamRef else { return }
                 watcher.handleEvent()
             },
             &context,
@@ -75,7 +81,7 @@ final class FileSystemWatcher: @unchecked Sendable {
             0,
             UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
         ) else {
-            self.watchedURL = nil
+            self.watchedURLs = []
             return
         }
 
@@ -101,7 +107,7 @@ final class FileSystemWatcher: @unchecked Sendable {
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
         onChange = nil
-        watchedURL = nil
+        watchedURLs = []
     }
 
     /// 处理文件系统事件（防抖：连续变化合并为一次刷新）
