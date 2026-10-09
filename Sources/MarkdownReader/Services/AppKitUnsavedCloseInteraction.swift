@@ -49,4 +49,45 @@ final class AppKitUnsavedCloseInteraction: UnsavedCloseInteraction {
             suggestedName: suggestedName
         )
     }
+
+    func presentUnsavedWorkspacePrompt(for session: WindowSession) -> UnsavedPromptChoice {
+        let language = SettingsModel.shared.languagePref.resolvedLanguage
+
+        let alert = NSAlert()
+        alert.messageText = L10n.tr(.unsavedWorkspaceTitle, language: language)
+        alert.informativeText = L10n.tr(.unsavedWorkspaceMessage, language: language)
+        alert.alertStyle = .warning
+
+        alert.addButton(withTitle: L10n.tr(.unsavedSave, language: language))
+        alert.addButton(withTitle: L10n.tr(.unsavedDontSave, language: language))
+        alert.addButton(withTitle: L10n.tr(.unsavedCancel, language: language))
+
+        alert.buttons[0].keyEquivalent = "\r"
+        alert.buttons[1].keyEquivalent = "d"
+        alert.buttons[1].keyEquivalentModifierMask = .command
+        alert.buttons[2].keyEquivalent = "\u{1b}"
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .save
+        case .alertSecondButtonReturn:
+            return .dontSave
+        default:
+            return .cancel
+        }
+    }
+
+    func chooseWorkspaceSaveTarget(
+        for session: WindowSession,
+        suggestedName: String,
+        defaultDirectory: URL?
+    ) async -> URL? {
+        let language = SettingsModel.shared.languagePref.resolvedLanguage
+        return await OpenPanelHelper.showWorkspaceSavePanel(
+            for: session.window,
+            language: language,
+            defaultDirectory: defaultDirectory,
+            suggestedName: suggestedName
+        )
+    }
 }

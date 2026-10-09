@@ -52,6 +52,25 @@ struct MarkdownReaderCommands: Commands {
             .keyboardShortcut("s", modifiers: [.command, .shift])
             .disabled(target == nil)
 
+            Divider()
+
+            Button(L10n.tr(.menuAddFolderToWorkspace, language: language)) {
+                target?.perform(.addFolderToWorkspace)
+            }
+            .disabled(target == nil)
+
+            Button(L10n.tr(.menuSaveWorkspace, language: language)) {
+                target?.perform(.saveWorkspace)
+            }
+            .disabled(target == nil)
+
+            Button(L10n.tr(.menuSaveWorkspaceAs, language: language)) {
+                target?.perform(.saveWorkspaceAs)
+            }
+            .disabled(target == nil)
+
+            Divider()
+
             Button(L10n.tr(.exportPDF, language: language)) {
                 target?.perform(.exportPDF)
             }

@@ -8,6 +8,8 @@ struct FileRowView: View {
     let documentViewModel: DocumentViewModel
     /// Task 9：用于跨窗口所有权标记。
     let session: WindowSession
+    /// 是否为工作区顶层根节点：工作区模式下显示绝对路径副标题，便于区分多根。
+    var isWorkspaceRoot: Bool = false
     @Environment(\.themeColors) private var themeColors
     @Environment(\.language) private var language
 
@@ -37,6 +39,17 @@ struct FileRowView: View {
             Text(node.name)
                 .foregroundStyle(node.isMarkdown || node.isDirectory ? themeColors.ink : themeColors.fgSecondary)
                 .lineLimit(1)
+                .layoutPriority(1)  // 名称优先保留完整宽度，路径副标题先被截断
+
+            // 工作区模式的顶层根：名称后追加绝对路径（弱色），便于区分同名/多根目录。
+            // 宽度不足时由 Spacer 前的行内布局自然截断。
+            if isWorkspaceRoot && node.isDirectory && session.appViewModel.isWorkspaceMode {
+                Text(node.path.path)
+                    .font(.system(size: 10))
+                    .foregroundStyle(themeColors.fgMuted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
 
             if isDirty {
                 Text("*")

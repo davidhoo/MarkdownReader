@@ -66,6 +66,60 @@ final class ApplicationTerminationCoordinator {
         return await closeCoordinator.resolveUnsavedChanges(for: session)
     }
 
+    /// 异步处理单个 session 的全部关闭阻塞项：先脏 Untitled 文档，后脏工作区。
+    /// 任一环节取消/失败即返回 `.cancel`，保留窗口。
+    func resolveCloseBlockers(for session: WindowSession) async -> UnsavedCloseDecision {
+        if session.documentViewModel.isUntitled && session.documentViewModel.isDirty {
+            let decision = await closeCoordinator.resolveUnsavedChanges(for: session)
+            if decision == .cancel {
+                return .cancel
+            }
+        }
+        if session.workspaceNeedsSaveDecision {
+            return await resolveWorkspaceChanges(for: session)
+        }
+        return .proceed
+    }
+
+    /// 异步处理脏工作区的保存确认：询问 → 选择目标 → 落盘。
+    /// 保存失败/取消返回 `.cancel`，保留窗口与工作区状态。
+    func resolveWorkspaceChanges(for session: WindowSession) async -> UnsavedCloseDecision {
+        let settings = SettingsModel.shared
+        let choice = closeInteraction.presentUnsavedWorkspacePrompt(for: session)
+
+        switch choice {
+        case .save:
+            // 已关联工作区文件：直接覆写原文件，不弹另存为面板
+            if let existingURL = session.appViewModel.workspaceFileURL {
+                return session.performWorkspaceSave(to: existingURL) ? .proceed : .cancel
+            }
+
+            // 未关联文件：走另存为面板
+            let suggestedName = (session.fileTreeViewModel.rootDirectories.first?.lastPathComponent ?? "Workspace")
+                + "." + WorkspaceDocument.fileExtension
+            let defaultDir = settings.lastOpenedDirectory ?? settings.lastOpenedFile?.deletingLastPathComponent()
+
+            guard let saveURL = await closeInteraction.chooseWorkspaceSaveTarget(
+                for: session,
+                suggestedName: suggestedName,
+                defaultDirectory: defaultDir
+            ) else {
+                // 用户取消保存面板：保留窗口与工作区状态
+                return .cancel
+            }
+
+            return session.performWorkspaceSave(to: saveURL) ? .proceed : .cancel
+
+        case .dontSave:
+            // 丢弃工作区更改：复位脏标记，窗口可关闭
+            session.fileTreeViewModel.markWorkspaceSaved()
+            return .proceed
+
+        case .cancel:
+            return .cancel
+        }
+    }
+
     // MARK: - 应用退出
 
     /// 进入终止处理：同步切到 `.processing`，返回是否接管。
@@ -95,13 +149,17 @@ final class ApplicationTerminationCoordinator {
             return
         }
 
-        // 按确定顺序（WindowID uuid 字符串）处理所有脏 Untitled session，保证可测试、可复现。
+        // 按确定顺序（WindowID uuid 字符串）处理所有有关闭阻塞项的 session
+        // （脏 Untitled 文档或脏工作区），保证可测试、可复现。
         let dirtySessions = coordinator.sessions.values
-            .filter { $0.documentViewModel.isUntitled && $0.documentViewModel.isDirty }
+            .filter {
+                ($0.documentViewModel.isUntitled && $0.documentViewModel.isDirty)
+                    || $0.workspaceNeedsSaveDecision
+            }
             .sorted { $0.id.rawValue.uuidString < $1.id.rawValue.uuidString }
 
         for session in dirtySessions {
-            let decision = await resolveUnsavedChanges(for: session)
+            let decision = await resolveCloseBlockers(for: session)
             if decision == .cancel {
                 // 任一 session 取消或保存失败：终止整个退出流程，复位 idle 允许下次尝试
                 state = .idle

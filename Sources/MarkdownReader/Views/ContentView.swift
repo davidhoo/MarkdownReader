@@ -214,7 +214,8 @@ struct ContentView: View {
     /// 用于 Dock 点击重新激活时，避免恢复旧窗口的文档内容
     private func resetToWelcome() {
         commandPaletteViewModel.hide()
-        appViewModel.rootDirectory = nil
+        appViewModel.workspaceFileURL = nil
+        appViewModel.rootDirectories = []
         appViewModel.isSingleFileMode = false
         appViewModel.singleFileURL = nil
         appViewModel.selectedFile = nil
@@ -515,18 +516,29 @@ private struct DirectoryChangeModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: appViewModel.rootDirectory) { _, newDirectory in
-                if let dir = newDirectory {
+            .onChange(of: appViewModel.rootDirectories) { _, newDirectories in
+                // session 直接驱动的树变更（打开工作区/增删文件夹）：跳过破坏性重载，
+                // 避免与 session 的加载/选中恢复形成竞态。一次性消费。
+                if fileTreeViewModel.suppressNextDirectoryChangeReaction {
+                    fileTreeViewModel.suppressNextDirectoryChangeReaction = false
+                    return
+                }
+                // session 已在加载同一组根（如 openDirectory/openWorkspace 直接调用
+                // loadWorkspace）：不重复清除选中与重载。
+                if !newDirectories.isEmpty, fileTreeViewModel.matchesActiveRoots(newDirectories) {
+                    return
+                }
+                if newDirectories.isEmpty {
+                    fileTreeViewModel.clearDirectory(clearSelection: false)
+                } else {
                     // 清除选中状态，避免旧选中 URL 与新目录状态不同步
                     // （例如：从单文件模式切到目录模式时，selectedFileURL 仍指向旧文件，
                     // 但 documentViewModel 已被清空，导致点击同一文件不触发 onChange）
                     fileTreeViewModel.selectedFileURL = nil
                     documentViewModel.clearDocument()
                     Task {
-                        await fileTreeViewModel.loadDirectory(dir)
+                        await fileTreeViewModel.loadWorkspace(folders: newDirectories)
                     }
-                } else {
-                    fileTreeViewModel.clearDirectory(clearSelection: false)
                 }
             }
     }
@@ -622,9 +634,8 @@ private struct SelectionChangeModifier: ViewModifier {
                 documentViewModel.deselectCurrentFile()
                 appViewModel.selectedFile = nil
 
-                // 如果保存在当前目录下，刷新文件树并选中
-                if let rootDir = appViewModel.rootDirectory,
-                   saveURL.path.hasPrefix(rootDir.path) {
+                // 如果保存在当前工作区某个根目录下，刷新文件树并选中
+                if appViewModel.rootDirectories.contains(where: { saveURL.path.hasPrefix($0.path) }) {
                     await fileTreeViewModel.refreshDirectory()
                     fileTreeViewModel.selectedFileURL = saveURL
                 }
@@ -665,10 +676,11 @@ private struct SettingsChangeModifier: ViewModifier {
     }
 
     private func reloadFileTree() {
-        guard let dir = appViewModel.rootDirectory else { return }
+        let roots = appViewModel.rootDirectories
+        guard !roots.isEmpty else { return }
         fileTreeViewModel.selectedFileURL = nil
         Task {
-            await fileTreeViewModel.loadDirectory(dir)
+            await fileTreeViewModel.loadWorkspace(folders: roots)
         }
     }
 }
@@ -840,12 +852,12 @@ private struct WindowCloseGuard: NSViewRepresentable {
                 return false
             }
 
-            // 3. 无脏 Untitled：直接关闭
+            // 3. 无关闭阻塞项（脏 Untitled/脏工作区）：直接关闭
             if session.prepareForClose() == .close {
                 return true
             }
 
-            // 4. 首次关闭脏 Untitled：启动异步流程，本次返回 false
+            // 4. 首次关闭存在阻塞项：启动异步流程，本次返回 false
             isClosingInProgress = true
             startAsyncClose(session: session, window: sender)
             return false
@@ -859,12 +871,12 @@ private struct WindowCloseGuard: NSViewRepresentable {
             allowNextClose = false
         }
 
-        /// 异步完成「询问 → 选择路径 → 保存」，成功后复关，失败保持窗口。
+        /// 异步完成「询问 → 选择路径 → 保存」（含脏 Untitled 与脏工作区），成功后复关，失败保持窗口。
         private func startAsyncClose(session: WindowSession, window: NSWindow) {
             let termCoord = AppDelegate.sharedTerminationCoordinator
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let decision = await termCoord.resolveUnsavedChanges(for: session)
+                let decision = await termCoord.resolveCloseBlockers(for: session)
                 switch decision {
                 case .proceed:
                     // 保存成功或选择不保存：置一次性放行标记，触发复关

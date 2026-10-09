@@ -42,6 +42,12 @@ final class WindowCommandTarget {
             session.handleSave()
         case .saveAs:
             session.handleSaveAs()
+        case .addFolderToWorkspace:
+            session.addFolderToWorkspace()
+        case .saveWorkspace:
+            session.handleSaveWorkspace()
+        case .saveWorkspaceAs:
+            session.handleSaveWorkspaceAs()
         case .exportPDF:
             exportPDFHandler?()
         case .reloadFile:

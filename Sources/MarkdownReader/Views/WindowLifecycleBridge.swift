@@ -121,19 +121,24 @@ final class WindowDropOverlayView: NSView {
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         guard canAcceptDrag(sender) else { return [] }
         session?.appViewModel.isDropTargeted = true
+        updateDropZone(sender)
         return .copy
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        .copy
+        // 悬停位置可能在侧边栏与内容区之间移动，实时更新高亮区域
+        updateDropZone(sender)
+        return .copy
     }
 
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
         session?.appViewModel.isDropTargeted = false
+        session?.appViewModel.isSidebarDropTargeted = false
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         session?.appViewModel.isDropTargeted = false
+        session?.appViewModel.isSidebarDropTargeted = false
 
         let pasteboard = sender.draggingPasteboard
         let urls: [URL]
@@ -149,6 +154,28 @@ final class WindowDropOverlayView: NSView {
         }
         guard !urls.isEmpty else { return false }
 
+        // 落在侧边栏区域：目录 → 添加文件夹到工作区；文件仍走统一路由打开。
+        // 侧边栏是 SwiftUI 子树，本 overlay 位于其上层会优先收到拖拽，
+        // 因此分流必须在本层完成（SwiftUI dropDestination 无法抢占）。
+        if dropIsInsideSidebar(sender), let session {
+            var fileURLsToOpen: [URL] = []
+            for url in urls {
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
+                   isDir.boolValue {
+                    session.addDroppedFolder(url)
+                } else {
+                    fileURLsToOpen.append(url)
+                }
+            }
+            if !fileURLsToOpen.isEmpty {
+                session.coordinator?.enqueue(
+                    OpenRequest(urls: fileURLsToOpen, source: .dragDrop, preferredWindowID: session.id)
+                )
+            }
+            return true
+        }
+
         // Task 11：经 Coordinator 路由，preferredWindowID 为本窗口（空白时复用，否则新窗口）
         let request = OpenRequest(urls: urls, source: .dragDrop, preferredWindowID: session?.id)
         session?.coordinator?.enqueue(request)
@@ -156,6 +183,22 @@ final class WindowDropOverlayView: NSView {
     }
 
     override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool { true }
+
+    /// 拖拽落点是否位于侧边栏区域内（仅比较横向坐标，与翻转坐标系无关）。
+    private func dropIsInsideSidebar(_ sender: any NSDraggingInfo) -> Bool {
+        guard let session,
+              session.appViewModel.isSidebarVisible,
+              session.appViewModel.sidebarWidth > 0,
+              let contentView = session.window?.contentView else { return false }
+        // draggingLocation 为窗口坐标系（左下角原点），转换到 contentView 后取 x
+        let locationInContent = contentView.convert(sender.draggingLocation, from: nil)
+        return locationInContent.x >= 0 && locationInContent.x <= session.appViewModel.sidebarWidth
+    }
+
+    /// 根据悬停位置更新拖拽高亮区域（侧边栏 vs 内容区）。
+    private func updateDropZone(_ sender: any NSDraggingInfo) {
+        session?.appViewModel.isSidebarDropTargeted = dropIsInsideSidebar(sender)
+    }
 
     private func canAcceptDrag(_ sender: any NSDraggingInfo) -> Bool {
         let pasteboard = sender.draggingPasteboard

@@ -59,6 +59,18 @@ struct SidebarView: View {
                 .help(L10n.tr(.titleBarNewFile, language: language))
                 .padding(.leading, 4)
 
+                // 添加文件夹到工作区按钮
+                Button {
+                    commandTarget?.perform(.addFolderToWorkspace)
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 14))
+                        .foregroundStyle(themeColors.fgSecondary)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.tr(.menuAddFolderToWorkspace, language: language))
+                .padding(.leading, 4)
+
                 Spacer()
             }
             .frame(height: 50)
@@ -81,6 +93,31 @@ struct SidebarView: View {
             settingsButton
         }
         .background(themeColors.bgSubtle)
+        // 注：拖拽目录到侧边栏添加文件夹的分流由窗口级 WindowDropOverlayView 按落点完成
+        // （overlay 位于 SwiftUI 子树之上会优先收到拖拽，此处不重复注册 dropDestination）。
+        .overlay {
+            // 拖拽悬停于侧边栏区域：虚线高亮 + 「添加文件夹到工作区」提示。
+            if appViewModel.isDropTargeted && appViewModel.isSidebarDropTargeted {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(themeColors.accent, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                        .padding(3)
+
+                    Text(L10n.tr(.menuAddFolderToWorkspace, language: language))
+                        .font(.system(size: 12))
+                        .foregroundStyle(themeColors.ink)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(themeColors.bgSubtle)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(themeColors.accent, lineWidth: 1)
+                        )
+                }
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     // MARK: - 单文件列表
@@ -126,7 +163,7 @@ struct SidebarView: View {
     private var directoryTreeView: some View {
         List {
             ForEach(fileTreeViewModel.nodes) { node in
-                FileNodeRow(node: node, fileTreeViewModel: fileTreeViewModel, documentViewModel: documentViewModel, session: session)
+                FileNodeRow(node: node, fileTreeViewModel: fileTreeViewModel, documentViewModel: documentViewModel, session: session, isWorkspaceRoot: true)
             }
         }
         .listStyle(.sidebar)
@@ -239,6 +276,8 @@ struct FileNodeRow: View {
     let documentViewModel: DocumentViewModel
     /// Task 9：用于跨窗口所有权标记。目录行不使用，但文件行需要。
     let session: WindowSession
+    /// 是否为工作区顶层根节点（仅根行显示「从工作区移除」菜单）
+    var isWorkspaceRoot: Bool = false
     @Environment(\.themeColors) private var themeColors
     @Environment(\.language) private var language
 
@@ -274,7 +313,7 @@ struct FileNodeRow: View {
                     FileNodeRow(node: child, fileTreeViewModel: fileTreeViewModel, documentViewModel: documentViewModel, session: session)
                 }
             } label: {
-                FileRowView(node: node, fileTreeViewModel: fileTreeViewModel, documentViewModel: documentViewModel, session: session)
+                FileRowView(node: node, fileTreeViewModel: fileTreeViewModel, documentViewModel: documentViewModel, session: session, isWorkspaceRoot: isWorkspaceRoot)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         // 点击目录标签区域切换展开/折叠
@@ -342,6 +381,16 @@ struct FileNodeRow: View {
             fileTreeViewModel.deleteItem(node)
         } label: {
             Label(L10n.tr(.contextMenuDelete, language: language), systemImage: "trash")
+        }
+
+        // 工作区顶层根：从工作区移除（不删除磁盘文件）
+        if isWorkspaceRoot && session.appViewModel.isWorkspaceMode {
+            Divider()
+            Button {
+                session.removeFolderFromWorkspace(node.path)
+            } label: {
+                Label(L10n.tr(.workspaceRemoveFolder, language: language), systemImage: "folder.badge.minus")
+            }
         }
     }
 

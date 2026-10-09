@@ -14,9 +14,26 @@ final class AppViewModel {
 
     // MARK: - 目录状态
 
-    /// 当前打开的根目录
-    var rootDirectory: URL? {
+    /// 当前打开的根目录列表（工作区多根，有序）
+    var rootDirectories: [URL] = [] {
         didSet { updateWindowTitle() }
+    }
+
+    /// 兼容单根语义：首个根目录。
+    /// 读取等价于旧 `rootDirectory`；写入会整体替换为单根工作区。
+    var rootDirectory: URL? {
+        get { rootDirectories.first }
+        set { rootDirectories = newValue.map { [$0] } ?? [] }
+    }
+
+    /// 关联的工作区文件 URL（nil = 未保存为工作区文件）
+    var workspaceFileURL: URL? {
+        didSet { updateWindowTitle() }
+    }
+
+    /// 是否处于工作区模式（多根或已关联工作区文件）
+    var isWorkspaceMode: Bool {
+        rootDirectories.count > 1 || workspaceFileURL != nil
     }
 
     /// 是否为单文件模式（直接打开单个文件，无目录树）
@@ -38,10 +55,11 @@ final class AppViewModel {
     /// Sidebar 所属的目录上下文。
     ///
     /// `SidebarView` 为规避 AppKit hit-testing 问题会一直保留在视图树中，并以 0 宽度隐藏。
-    /// 从欢迎页首次进入目录模式时，SwiftUI 偶尔会保留这份 0 宽度布局；以根目录作为身份
+    /// 从欢迎页首次进入目录模式时，SwiftUI 偶尔会保留这份 0 宽度布局；以根目录集合作为身份
     /// 可在目录上下文变化时重建 Sidebar 子树，同时避免普通显隐操作反复销毁视图。
     var sidebarPresentationIdentity: String {
-        rootDirectory?.standardizedFileURL.path ?? "welcome"
+        guard !rootDirectories.isEmpty else { return "welcome" }
+        return rootDirectories.map(\.standardizedFileURL.path).joined(separator: "|")
     }
 
     /// Sidebar 当前宽度
@@ -104,6 +122,10 @@ final class AppViewModel {
     /// 文件拖拽悬停于本窗口。由本窗口的 WindowDropOverlayView 直接写入，
     /// 不再经全局通知，确保多窗口下只高亮被拖入的窗口。
     var isDropTargeted: Bool = false
+
+    /// 拖拽落点位于侧边栏区域（拖拽期间随悬停位置实时更新）。
+    /// 为 true 时高亮侧边栏（提示「添加文件夹到工作区」），否则高亮内容区。
+    var isSidebarDropTargeted: Bool = false
 
     // MARK: - 命令面板状态
 
@@ -228,18 +250,36 @@ final class AppViewModel {
         outlineWidth = max(Self.minOutlineWidth, min(Self.maxOutlineWidth, outlineWidth))
     }
 
-    /// 打开目录
+    /// 打开目录（单根工作区）
     ///
     /// 目录模式下目录树是主要操作入口，因此无论此前 Sidebar 是否隐藏，
     /// 打开目录成功后必须保证 Sidebar 可见。
     /// - 已显示 Sidebar：保留用户调整过的宽度，不重置；
     /// - 从隐藏切到显示：若宽度无效（被收起操作压到阈值以下），恢复默认宽度。
     func openDirectory(_ url: URL) {
-        rootDirectory = url
+        workspaceFileURL = nil
+        rootDirectories = [url]
         isSingleFileMode = false
         singleFileURL = nil
         selectedFile = nil
-        // 目录模式恢复 Sidebar
+        ensureSidebarVisibleForTreeMode()
+    }
+
+    /// 打开工作区（多根）。
+    /// - Parameters:
+    ///   - folders: 根目录列表（有序）
+    ///   - fileURL: 关联的工作区文件 URL（nil = 未保存工作区）
+    func openWorkspace(folders: [URL], fileURL: URL?) {
+        workspaceFileURL = fileURL
+        rootDirectories = folders
+        isSingleFileMode = false
+        singleFileURL = nil
+        selectedFile = nil
+        ensureSidebarVisibleForTreeMode()
+    }
+
+    /// 目录/工作区模式统一的 Sidebar 可见性保证。
+    private func ensureSidebarVisibleForTreeMode() {
         if !isSidebarVisible {
             // OpenPanel 的 sheet 正在结束时启动宽度动画，SwiftUI 偶尔会把 Sidebar
             // 留在动画起点（0 宽度），直到用户手动显隐两次才重新布局。
@@ -253,14 +293,15 @@ final class AppViewModel {
 
     /// 打开单个文件（单文件模式，Sidebar 默认隐藏但可手动打开）
     func openSingleFile(_ url: URL) {
-        // 先设置单文件模式属性，再清空 rootDirectory
-        // 因为 rootDirectory 的 didSet 会调用 updateWindowTitle()
-        // 如果先清空 rootDirectory，此时 isSingleFileMode/singleFileURL 尚未设置
+        // 先设置单文件模式属性，再清空根目录
+        // 因为 rootDirectories 的 didSet 会调用 updateWindowTitle()
+        // 如果先清空根目录，此时 isSingleFileMode/singleFileURL 尚未设置
         // 会导致窗口标题无法正确显示文件名
         isSingleFileMode = true
         singleFileURL = url
         selectedFile = nil
-        rootDirectory = nil
+        workspaceFileURL = nil
+        rootDirectories = []
         if isSidebarVisible {
             withAnimation(.spring(duration: 0.25)) {
                 isSidebarVisible = false
@@ -278,7 +319,11 @@ final class AppViewModel {
             windowTitle = "Markdown Reader — \(untitledFileName)"
         } else if isSingleFileMode, let url = singleFileURL {
             windowTitle = "Markdown Reader — \(url.lastPathComponent)"
-        } else if let dir = rootDirectory {
+        } else if let workspaceURL = workspaceFileURL {
+            windowTitle = "Markdown Reader — \(workspaceURL.lastPathComponent)"
+        } else if rootDirectories.count > 1 {
+            windowTitle = "Markdown Reader — \(L10n.tr(.workspaceUntitledName, language: SettingsModel.shared.languagePref.resolvedLanguage))"
+        } else if let dir = rootDirectories.first {
             windowTitle = "Markdown Reader — \(dir.lastPathComponent)"
         } else {
             windowTitle = "Markdown Reader"
