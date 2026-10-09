@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### 已知遗留（后续处理）
+
+- `ContentView.handleDeletedFileWithUnsavedChanges` 仍用 `NSAlert.runModal()`（应用级 modal，多窗口下阻塞所有窗口）；Save/SaveAs/ExportPDF 面板已改窗口级 sheet，但文件被外部删除的未保存确认 alert 尚未统一，待改为 `beginSheetModal(for: window)`
+- `FileTreeViewModel.moveItem` 的 NSOpenPanel 仍用 `runModal()`，多窗口下阻塞，待改窗口级 sheet
+- 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
+- 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
+
+## [2.4.8] - 2026-10-09
+
 ### 修复
 
 - **目录符号链接可按文件夹浏览**：文件夹里的目录符号链接不再显示成文件。扫描会跟随链接列出目标内容，节点路径仍保留链接名；指回祖先的链接环停止展开，无权限的目标保留为目录且不让整棵树失败。
@@ -16,12 +25,9 @@
 
 - **发布流程强制同步 Homebrew Tap**：`./release-local.sh` 在 GitHub Release 公开后自动更新 `davidhoo/homebrew-markdownreader` 的 Cask `version`/`sha256` 并回读校验；同步失败则整次发布失败。正式发版不得只发 GitHub Release。说明见 `docs/homebrew-tap-maintenance.md`。
 
-### 已知遗留（后续处理）
+### 测试
 
-- `ContentView.handleDeletedFileWithUnsavedChanges` 仍用 `NSAlert.runModal()`（应用级 modal，多窗口下阻塞所有窗口）；Save/SaveAs/ExportPDF 面板已改窗口级 sheet，但文件被外部删除的未保存确认 alert 尚未统一，待改为 `beginSheetModal(for: window)`
-- `FileTreeViewModel.moveItem` 的 NSOpenPanel 仍用 `runModal()`，多窗口下阻塞，待改窗口级 sheet
-- 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
-- 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
+- 全部 326 个单元测试通过。新增 `DirectorySymlinkScanTests`（目录链接展开、链接名路径保留、祖先环截断、无权限目标、悬空链接）与 `DirectorySymlinkWatchTests`（根外目标增删改名刷新、链接改指重设监控、关闭目录清理监控）；`scripts/tests/homebrew-cask-sync-test.sh` 40 项全部通过。
 
 ## [2.4.7] - 2026-09-22
 
