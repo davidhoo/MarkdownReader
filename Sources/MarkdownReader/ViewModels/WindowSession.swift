@@ -137,8 +137,16 @@ final class WindowSession {
     /// 所有权声明（claim）由路由成功后的调用点统一负责，不在本方法内重复 claim——
     /// 避免与路由引擎形成双保险且用 `try?` 吞掉冲突（历史 bug）。
     func openFile(_ url: URL) async {
-        appViewModel.openSingleFile(url)
+        appViewModel.openSingleFile(
+            url,
+            openContainingDirectoryInSidebar: settings.openContainingDirectoryForSingleFile
+        )
         fileTreeViewModel.selectedFileURL = url
+        // 单文件目录树：同步加载文件所在目录，不依赖视图层 onChange 的时序。
+        // 走同一个入口，保证与视图层驱动的加载行为一致（且不会清空当前文档）。
+        if appViewModel.sidebarRootDirectory != nil {
+            await sidebarTreeDirectoryDidChange(to: appViewModel.sidebarRootDirectory)
+        }
         await documentViewModel.loadFile(at: url)
         guard documentViewModel.fileError == nil else { return }
 
@@ -156,6 +164,28 @@ final class WindowSession {
 
         recordLastOpened(file: nil, directory: url.standardizedFileURL)
         settings.addRecentItem(url: url, isDirectory: true)
+    }
+
+    // MARK: - 侧边栏目录树上下文
+
+    /// 侧边栏目录树根目录变化时的统一处理（目录模式与单文件目录树共用）。
+    ///
+    /// 由视图层 `DirectoryChangeModifier` 监听 `appViewModel.sidebarTreeDirectory` 调用：
+    /// - 目录模式：根目录变化必须重置选中与文档，避免旧文件状态残留；
+    /// - 单文件目录树：只重建目录，**不得**触碰当前文档与选中项。
+    /// 抽到 session 便于回归测试直接驱动，无需挂载真实视图。
+    func sidebarTreeDirectoryDidChange(to directory: URL?) async {
+        guard let directory else {
+            fileTreeViewModel.clearDirectory(clearSelection: false)
+            return
+        }
+
+        if !appViewModel.isSingleFileMode {
+            fileTreeViewModel.selectedFileURL = nil
+            documentViewModel.clearDocument()
+        }
+
+        await fileTreeViewModel.loadDirectory(directory)
     }
 
     // MARK: - 目录树选择前路由
@@ -310,6 +340,9 @@ final class WindowSession {
             }
         }
 
+        // 单文件模式：侧边栏目录树内切换文件时同步当前文件，否则窗口标题会停在旧文件名。
+        appViewModel.updateSingleFileURL(url)
+
         // 切换选中项；文档加载由视图层 SelectionChangeModifier 响应变化完成。
         fileTreeViewModel.selectedFileURL = url
     }
@@ -377,12 +410,19 @@ final class WindowSession {
                 }
             }
         }
-        appViewModel.openSingleFile(url)
+        appViewModel.openSingleFile(
+            url,
+            openContainingDirectoryInSidebar: settings.openContainingDirectoryForSingleFile
+        )
         fileTreeViewModel.selectedFileURL = url
         recordLastOpened(file: url, directory: nil)
         SettingsModel.shared.addRecentItem(url: url, isDirectory: false)
         Task { @MainActor [weak self] in
-            await self?.documentViewModel.loadFile(at: url)
+            guard let self else { return }
+            if self.appViewModel.sidebarRootDirectory != nil {
+                await self.sidebarTreeDirectoryDidChange(to: self.appViewModel.sidebarRootDirectory)
+            }
+            await self.documentViewModel.loadFile(at: url)
         }
     }
 
@@ -516,9 +556,13 @@ final class WindowSession {
             try? coordinator.migrateOwnership(from: oldURL, to: saveURL, for: self.id)
         }
 
-        if let rootDir = self.appViewModel.rootDirectory,
-           saveURL.path.hasPrefix(rootDir.path + "/") {
-            await self.fileTreeViewModel.loadDirectory(rootDir)
+        // 单文件模式（另存为后文档已指向新路径）：同步当前文件，否则窗口标题会停在旧文件名。
+        self.appViewModel.updateSingleFileURL(saveURL)
+
+        // 目录模式与单文件目录树共用同一侧边栏上下文：保存到当前目录范围内时刷新并选中新文件。
+        if let treeDirectory = self.appViewModel.sidebarTreeDirectory,
+           saveURL.path.hasPrefix(treeDirectory.path + "/") {
+            await self.fileTreeViewModel.loadDirectory(treeDirectory)
             self.fileTreeViewModel.selectedFileURL = saveURL
         }
 

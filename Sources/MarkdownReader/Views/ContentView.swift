@@ -49,8 +49,7 @@ struct ContentView: View {
             ))
             .modifier(DirectoryChangeModifier(
                 appViewModel: appViewModel,
-                documentViewModel: documentViewModel,
-                fileTreeViewModel: fileTreeViewModel
+                session: session
             ))
             .modifier(SelectionChangeModifier(
                 appViewModel: appViewModel,
@@ -217,6 +216,7 @@ struct ContentView: View {
         appViewModel.rootDirectory = nil
         appViewModel.isSingleFileMode = false
         appViewModel.singleFileURL = nil
+        appViewModel.clearSidebarRootDirectory()
         appViewModel.selectedFile = nil
         appViewModel.hasUnsavedUntitled = false
         appViewModel.untitledFileName = ""
@@ -245,7 +245,10 @@ struct ContentView: View {
             appViewModel.openDirectory(dir)
             settings.addRecentItem(url: dir, isDirectory: true)
         } else if let file = settings.lastOpenedFile {
-            appViewModel.openSingleFile(file)
+            appViewModel.openSingleFile(
+                file,
+                openContainingDirectoryInSidebar: settings.openContainingDirectoryForSingleFile
+            )
             fileTreeViewModel.selectedFileURL = file
             settings.addRecentItem(url: file, isDirectory: false)
         } else {
@@ -510,23 +513,16 @@ private struct FileOpenModifier: ViewModifier {
 
 private struct DirectoryChangeModifier: ViewModifier {
     let appViewModel: AppViewModel
-    let documentViewModel: DocumentViewModel
-    let fileTreeViewModel: FileTreeViewModel
+    let session: WindowSession
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: appViewModel.rootDirectory) { _, newDirectory in
-                if let dir = newDirectory {
-                    // 清除选中状态，避免旧选中 URL 与新目录状态不同步
-                    // （例如：从单文件模式切到目录模式时，selectedFileURL 仍指向旧文件，
-                    // 但 documentViewModel 已被清空，导致点击同一文件不触发 onChange）
-                    fileTreeViewModel.selectedFileURL = nil
-                    documentViewModel.clearDocument()
-                    Task {
-                        await fileTreeViewModel.loadDirectory(dir)
-                    }
-                } else {
-                    fileTreeViewModel.clearDirectory(clearSelection: false)
+            // 目录模式看 rootDirectory，单文件目录树看 sidebarRootDirectory。
+            // 统一取 sidebarTreeDirectory，两种上下文共用同一套加载/清理逻辑，
+            // 具体行为由 session.sidebarTreeDirectoryDidChange 统一承载（可单测）。
+            .onChange(of: appViewModel.sidebarTreeDirectory) { _, newDirectory in
+                Task { @MainActor in
+                    await session.sidebarTreeDirectoryDidChange(to: newDirectory)
                 }
             }
     }
@@ -622,9 +618,10 @@ private struct SelectionChangeModifier: ViewModifier {
                 documentViewModel.deselectCurrentFile()
                 appViewModel.selectedFile = nil
 
-                // 如果保存在当前目录下，刷新文件树并选中
-                if let rootDir = appViewModel.rootDirectory,
-                   saveURL.path.hasPrefix(rootDir.path) {
+                // 如果保存在当前侧边栏目录范围内，刷新文件树并选中
+                // （目录模式与单文件目录树共用同一上下文）
+                if let treeDirectory = appViewModel.sidebarTreeDirectory,
+                   saveURL.path.hasPrefix(treeDirectory.path) {
                     await fileTreeViewModel.refreshDirectory()
                     fileTreeViewModel.selectedFileURL = saveURL
                 }
@@ -659,14 +656,20 @@ private struct SettingsChangeModifier: ViewModifier {
         content
             .onChange(of: settings.showHiddenFiles) { _, _ in reloadFileTree() }
             .onChange(of: settings.showNonMarkdownFiles) { _, _ in reloadFileTree() }
+            .onChange(of: settings.openContainingDirectoryForSingleFile) { _, enabled in
+                appViewModel.applySingleFileSidebarTreeSetting(enabled: enabled)
+            }
             .onChange(of: settings.languagePref.resolvedLanguage) { _, newLanguage in
                 fileTreeViewModel.language = newLanguage
             }
     }
 
     private func reloadFileTree() {
-        guard let dir = appViewModel.rootDirectory else { return }
-        fileTreeViewModel.selectedFileURL = nil
+        guard let dir = appViewModel.sidebarTreeDirectory else { return }
+        // 单文件模式下选中项属于当前文档，不能因过滤设置变化被清除
+        if !appViewModel.isSingleFileMode {
+            fileTreeViewModel.selectedFileURL = nil
+        }
         Task {
             await fileTreeViewModel.loadDirectory(dir)
         }

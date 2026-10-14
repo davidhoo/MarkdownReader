@@ -13,6 +13,31 @@ struct SidebarView: View {
     @Environment(\.language) private var language
     @Environment(\.themeColors) private var themeColors
 
+    /// Sidebar 内容分支标识（同时供渲染探针与回归测试使用）。
+    /// - `singleFile`: 未开启目录树的单文件模式，只列出当前文件条目；
+    /// - `directoryTree`: 目录模式或已开启目录树的单文件模式。
+    enum ContentMode: String {
+        case singleFile
+        case loading
+        case error
+        case emptyDirectory
+        case directoryTree
+    }
+
+    var contentMode: ContentMode {
+        if !appViewModel.showsSidebarTree && appViewModel.isSingleFileMode {
+            return .singleFile
+        } else if fileTreeViewModel.isLoading {
+            return .loading
+        } else if fileTreeViewModel.errorMessage != nil {
+            return .error
+        } else if fileTreeViewModel.nodes.isEmpty {
+            return .emptyDirectory
+        } else {
+            return .directoryTree
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // 顶部区域：自定义红绿灯 + Sidebar 隐藏按钮 + 打开按钮 + 新建文件按钮（50px）
@@ -64,23 +89,33 @@ struct SidebarView: View {
             .frame(height: 50)
             .background(WindowDragArea())
 
-            if appViewModel.isSingleFileMode {
-                singleFileView
-            } else if fileTreeViewModel.isLoading {
-                ProgressView(L10n.tr(.loading, language: language))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = fileTreeViewModel.errorMessage {
-                ErrorView(message: error)
-            } else if fileTreeViewModel.nodes.isEmpty {
-                emptyDirectoryView
-            } else {
-                directoryTreeView
-            }
+            content
+                .background(SidebarContentProbe(mode: contentMode.rawValue))
 
             // 底部固定区域：Settings 按钮（参考 Buddy 底部固定设置入口）
             settingsButton
         }
         .background(themeColors.bgSubtle)
+    }
+
+    // MARK: - 内容分支
+
+    @ViewBuilder
+    private var content: some View {
+        switch contentMode {
+        case .singleFile:
+            // 单文件模式且未开启「在侧边栏打开当前目录」：保持原有的单文件条目列表
+            singleFileView
+        case .loading:
+            ProgressView(L10n.tr(.loading, language: language))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .error:
+            ErrorView(message: fileTreeViewModel.errorMessage ?? "")
+        case .emptyDirectory:
+            emptyDirectoryView
+        case .directoryTree:
+            directoryTreeView
+        }
     }
 
     // MARK: - 单文件列表
@@ -227,6 +262,34 @@ struct SidebarLayoutProbe: NSViewRepresentable {
 }
 
 private final class SidebarLayoutProbeView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Sidebar 当前内容分支的 AppKit 探针。
+///
+/// 与 `SidebarLayoutProbe` 同源：不参与交互与状态，只把「当前渲染的是哪个分支」
+/// 暴露给 AppKit 视图树，使回归测试能验证单文件模式确实切到了目录树而非单文件条目。
+struct SidebarContentProbe: NSViewRepresentable {
+    static let viewIdentifier = NSUserInterfaceItemIdentifier("markdownreader.sidebar-content-probe")
+
+    let mode: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = SidebarContentProbeView()
+        view.identifier = Self.viewIdentifier
+        view.mode = mode
+        view.setAccessibilityElement(false)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? SidebarContentProbeView)?.mode = mode
+    }
+}
+
+/// 探针视图：仅携带内容分支标识，不参与命中测试。
+final class SidebarContentProbeView: NSView {
+    var mode: String = ""
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 

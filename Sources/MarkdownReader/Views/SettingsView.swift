@@ -88,6 +88,10 @@ struct GeneralSettingsView: View {
             ) {
                 Toggle(L10n.tr(.settingsGeneralShowHiddenFiles, language: language), isOn: $settings.showHiddenFiles)
                 Toggle(L10n.tr(.settingsGeneralShowNonMarkdownFiles, language: language), isOn: $settings.showNonMarkdownFiles)
+                Toggle(
+                    L10n.tr(.settingsGeneralOpenContainingDirectoryForSingleFile, language: language),
+                    isOn: $settings.openContainingDirectoryForSingleFile
+                )
             }
 
             SettingsDivider()

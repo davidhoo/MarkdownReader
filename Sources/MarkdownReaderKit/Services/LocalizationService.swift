@@ -40,6 +40,7 @@ public enum L10n {
         case settingsGeneralFileTreeTitle
         case settingsGeneralShowHiddenFiles
         case settingsGeneralShowNonMarkdownFiles
+        case settingsGeneralOpenContainingDirectoryForSingleFile
 
         // 设置 - 默认打开程序
         case settingsGeneralDefaultOpenerTitle
@@ -308,6 +309,7 @@ public enum L10n {
         .settingsGeneralFileTreeTitle: "File Tree",
         .settingsGeneralShowHiddenFiles: "Show hidden files",
         .settingsGeneralShowNonMarkdownFiles: "Show non-Markdown files",
+        .settingsGeneralOpenContainingDirectoryForSingleFile: "Open the containing folder in the sidebar when opening a single document",
         .settingsGeneralDefaultOpenerTitle: "Default Markdown Opener",
         .settingsGeneralDefaultOpenerDesc: "Set Markdown Reader as the default application for opening .md, .markdown, .mdown, .mkd files.",
         .settingsGeneralSetAsDefault: "Set as Default",
@@ -512,6 +514,7 @@ public enum L10n {
         .settingsGeneralFileTreeTitle: "文件树",
         .settingsGeneralShowHiddenFiles: "显示隐藏文件",
         .settingsGeneralShowNonMarkdownFiles: "显示非 Markdown 文件",
+        .settingsGeneralOpenContainingDirectoryForSingleFile: "打开单文档时，在侧边栏打开当前目录",
         .settingsGeneralDefaultOpenerTitle: "默认 Markdown 打开程序",
         .settingsGeneralDefaultOpenerDesc: "将 Markdown Reader 设置为 .md、.markdown、.mdown、.mkd 文件的默认打开程序。",
         .settingsGeneralSetAsDefault: "设为默认",
@@ -716,6 +719,7 @@ public enum L10n {
         .settingsGeneralFileTreeTitle: "檔案樹",
         .settingsGeneralShowHiddenFiles: "顯示隱藏檔案",
         .settingsGeneralShowNonMarkdownFiles: "顯示非 Markdown 檔案",
+        .settingsGeneralOpenContainingDirectoryForSingleFile: "開啟單一文件時，在側邊欄開啟目前目錄",
         .settingsGeneralDefaultOpenerTitle: "預設 Markdown 開啟程式",
         .settingsGeneralDefaultOpenerDesc: "將 Markdown Reader 設為 .md、.markdown、.mdown、.mkd 檔案的預設開啟程式。",
         .settingsGeneralSetAsDefault: "設為預設",

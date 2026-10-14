@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **打开单文档时在侧边栏打开当前目录**：设置 → 通用 → 文件树新增复选框「打开单文档时，在侧边栏打开当前目录」（默认关闭）。开启后，单独打开一个 Markdown 文件时会递归扫描该文件所在目录及其子目录，在左侧以目录树展示并高亮当前文件，侧边栏自动展开；该目录树**只列 Markdown 文件**，同级目录里的图片、`.json` 等非 Markdown 文件一律过滤。目录树原有的「显示隐藏文件」过滤与右键菜单能力同样生效，该选项可在设置中随时开关，已打开的单文档窗口会即时响应。
+
 ### 已知遗留（后续处理）
 
 - `ContentView.handleDeletedFileWithUnsavedChanges` 仍用 `NSAlert.runModal()`（应用级 modal，多窗口下阻塞所有窗口）；Save/SaveAs/ExportPDF 面板已改窗口级 sheet，但文件被外部删除的未保存确认 alert 尚未统一，待改为 `beginSheetModal(for: window)`

@@ -50,6 +50,7 @@ final class SettingsModel {
         static let reopenLastLocation   = "com.markdownreader.reopenLastLocation"
         static let showHiddenFiles      = "com.markdownreader.showHiddenFiles"
         static let showNonMarkdownFiles = "com.markdownreader.showNonMarkdownFiles"
+        static let openContainingDirectoryForSingleFile = "com.markdownreader.openContainingDirectoryForSingleFile"
         static let appearanceMode       = "com.markdownreader.appearanceMode"
         static let sourceFontSize       = "com.markdownreader.sourceFontSize"
         static let contentPadding       = "com.markdownreader.contentPadding"
@@ -108,6 +109,17 @@ final class SettingsModel {
     /// 在侧边栏显示非 Markdown 文件
     var showNonMarkdownFiles: Bool {
         didSet { defaults.set(showNonMarkdownFiles, forKey: Keys.showNonMarkdownFiles) }
+    }
+
+    /// 打开单个 Markdown 文件时，在侧边栏展开该文件所在目录的目录树。
+    /// 默认关闭，保持单文件模式原有的「无侧边栏」行为。
+    var openContainingDirectoryForSingleFile: Bool {
+        didSet {
+            defaults.set(
+                openContainingDirectoryForSingleFile,
+                forKey: Keys.openContainingDirectoryForSingleFile
+            )
+        }
     }
 
     /// 是否已设为 Markdown 文件默认打开程序（.md / .markdown / .mdown / .mkd）
@@ -420,6 +432,8 @@ final class SettingsModel {
         self.reopenLastLocation = defaults.object(forKey: Keys.reopenLastLocation) as? Bool ?? false
         self.showHiddenFiles = defaults.object(forKey: Keys.showHiddenFiles) as? Bool ?? false
         self.showNonMarkdownFiles = defaults.object(forKey: Keys.showNonMarkdownFiles) as? Bool ?? true
+        self.openContainingDirectoryForSingleFile =
+            defaults.object(forKey: Keys.openContainingDirectoryForSingleFile) as? Bool ?? false
         self.isDefaultMdOpener = Self.checkIsDefaultMdOpener()
         self.skipFileModifiedAlert = defaults.object(forKey: Keys.skipFileModifiedAlert) as? Bool ?? false
         self.maxContentWidthFollowsWindow = defaults.object(forKey: Keys.maxContentWidthFollowsWindow) as? Bool ?? false
