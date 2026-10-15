@@ -113,17 +113,21 @@ struct FileService: Sendable {
     /// - Parameters:
     ///   - directory: 要扫描的目录 URL
     ///   - showHiddenFiles: 是否显示隐藏文件
-    ///   - showNonMarkdownFiles: 是否显示非 Markdown 文件
+    ///   - showNonMarkdownFiles: 是否显示非 Markdown 文件（`markdownOnly` 为 true 时忽略）
+    ///   - markdownOnly: 只列 Markdown 文件。与「显示非 Markdown 文件」的区别在于
+    ///     `.txt` 也按后缀过滤掉（不当作潜在 Markdown），用于单文档侧边栏目录树。
     /// - Returns: 排序后的 FileNode 数组
     func scanDirectory(
         _ directory: URL,
         showHiddenFiles: Bool = false,
-        showNonMarkdownFiles: Bool = true
+        showNonMarkdownFiles: Bool = true,
+        markdownOnly: Bool = false
     ) async throws -> [FileNode] {
         try await scanDirectory(
             directory,
             showHiddenFiles: showHiddenFiles,
             showNonMarkdownFiles: showNonMarkdownFiles,
+            markdownOnly: markdownOnly,
             ancestors: []
         )
     }
@@ -135,6 +139,7 @@ struct FileService: Sendable {
         _ directory: URL,
         showHiddenFiles: Bool,
         showNonMarkdownFiles: Bool,
+        markdownOnly: Bool,
         ancestors: Set<String>
     ) async throws -> [FileNode] {
         let contents = try Self.directoryEntries(in: directory, showHiddenFiles: showHiddenFiles)
@@ -152,6 +157,7 @@ struct FileService: Sendable {
                     url,
                     showHiddenFiles: showHiddenFiles,
                     showNonMarkdownFiles: showNonMarkdownFiles,
+                    markdownOnly: markdownOnly,
                     ancestors: ancestors
                 )
                 // 空目录也显示（children 为空数组），以便用户新建空目录后能立即看到
@@ -163,9 +169,15 @@ struct FileService: Sendable {
                 )
                 nodes.append(node)
             } else {
-                // 如果不显示非 Markdown 文件，则跳过
                 let isTreeMarkdown = Self.isTreeDisplayExtension(url)
-                if !showNonMarkdownFiles && !isTreeMarkdown { continue }
+                if markdownOnly {
+                    // 只列 Markdown：忽略「显示非 Markdown 文件」设置，
+                    // 且 .txt 也不当作潜在 Markdown（按扩展名严格保留 .md/.markdown/.mdown/.mkd/.mkdown）
+                    if !Self.isKnownMarkdownExtension(url) { continue }
+                } else if !showNonMarkdownFiles && !isTreeMarkdown {
+                    // 如果不显示非 Markdown 文件，则跳过
+                    continue
+                }
                 let node = FileNode(
                     name: name,
                     path: url,
@@ -193,6 +205,7 @@ struct FileService: Sendable {
         _ url: URL,
         showHiddenFiles: Bool,
         showNonMarkdownFiles: Bool,
+        markdownOnly: Bool,
         ancestors: Set<String>
     ) async -> [FileNode] {
         let resolved = Self.canonicalDirectoryPath(url)
@@ -204,6 +217,7 @@ struct FileService: Sendable {
                 url,
                 showHiddenFiles: showHiddenFiles,
                 showNonMarkdownFiles: showNonMarkdownFiles,
+                markdownOnly: markdownOnly,
                 ancestors: ancestors
             )
         } catch {

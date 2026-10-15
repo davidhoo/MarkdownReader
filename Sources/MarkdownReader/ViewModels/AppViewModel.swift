@@ -19,11 +19,32 @@ final class AppViewModel {
         didSet { updateWindowTitle() }
     }
 
-    /// 是否为单文件模式（直接打开单个文件，无目录树）
+    /// 是否为单文件模式（直接打开单个文件）
+    ///
+    /// 单文件模式默认不展示侧边栏目录树；当设置「打开单文档时，在侧边栏打开当前目录」
+    /// 开启时，`sidebarRootDirectory` 会指向文件所在目录，侧边栏以目录树呈现。
     var isSingleFileMode: Bool = false
 
     /// 单文件模式下打开的文件 URL
     var singleFileURL: URL?
+
+    /// 单文件模式下侧边栏目录树的根目录（即当前文件所在目录）。
+    ///
+    /// 与 `rootDirectory` 严格分离：`rootDirectory` 只表示「目录模式」，
+    /// 避免单文件模式被 `isBlank` / 窗口路由 / 窗口标题等按目录模式处理而回归。
+    /// 仅在「打开单文档时，在侧边栏打开当前目录」开启时由 `openSingleFile` 写入。
+    var sidebarRootDirectory: URL?
+
+    /// 侧边栏目录树应展示的根目录：目录模式取 `rootDirectory`，单文件模式取 `sidebarRootDirectory`。
+    /// nil 表示侧边栏没有目录上下文（欢迎页 / 未开启该功能的单文件模式）。
+    var sidebarTreeDirectory: URL? {
+        isSingleFileMode ? sidebarRootDirectory : rootDirectory
+    }
+
+    /// 侧边栏是否应渲染目录树（而非单文件条目 / 空状态）。
+    var showsSidebarTree: Bool {
+        sidebarTreeDirectory != nil
+    }
 
     // MARK: - 选中状态
 
@@ -41,7 +62,13 @@ final class AppViewModel {
     /// 从欢迎页首次进入目录模式时，SwiftUI 偶尔会保留这份 0 宽度布局；以根目录作为身份
     /// 可在目录上下文变化时重建 Sidebar 子树，同时避免普通显隐操作反复销毁视图。
     var sidebarPresentationIdentity: String {
-        rootDirectory?.standardizedFileURL.path ?? "welcome"
+        // 单文件模式（含无目录上下文的单文件模式）与目录模式使用不同前缀，
+        // 保证模式切换时不会复用另一模式的 Sidebar 子树。
+        if isSingleFileMode {
+            guard let dir = sidebarRootDirectory else { return "single" }
+            return "single:" + dir.standardizedFileURL.path
+        }
+        return rootDirectory?.standardizedFileURL.path ?? "welcome"
     }
 
     /// Sidebar 当前宽度
@@ -235,24 +262,25 @@ final class AppViewModel {
     /// - 已显示 Sidebar：保留用户调整过的宽度，不重置；
     /// - 从隐藏切到显示：若宽度无效（被收起操作压到阈值以下），恢复默认宽度。
     func openDirectory(_ url: URL) {
-        rootDirectory = url
+        // 先清掉单文件模式标记，再写 rootDirectory：
+        // rootDirectory 的 didSet 会调用 updateWindowTitle()，若此时 isSingleFileMode 仍为
+        // true，窗口标题会继续显示旧文件名而卡住不更新。
         isSingleFileMode = false
         singleFileURL = nil
         selectedFile = nil
+        // 进入目录模式后，单文件侧边栏目录树不再适用
+        sidebarRootDirectory = nil
+        rootDirectory = url
         // 目录模式恢复 Sidebar
-        if !isSidebarVisible {
-            // OpenPanel 的 sheet 正在结束时启动宽度动画，SwiftUI 偶尔会把 Sidebar
-            // 留在动画起点（0 宽度），直到用户手动显隐两次才重新布局。
-            // 自动进入目录模式需要确定性布局，因此同步显示；用户主动 Cmd+\ 仍使用动画。
-            isSidebarVisible = true
-            if sidebarWidth < Self.minSidebarWidth {
-                sidebarWidth = Self.defaultSidebarWidth
-            }
-        }
+        revealSidebarForTree()
     }
 
-    /// 打开单个文件（单文件模式，Sidebar 默认隐藏但可手动打开）
-    func openSingleFile(_ url: URL) {
+    /// 打开单个文件（单文件模式）。
+    ///
+    /// - Parameter openContainingDirectoryInSidebar: 是否按设置「打开单文档时，在侧边栏打开当前目录」
+    ///   把文件所在目录以目录树形式展示在侧边栏。为 true 时侧边栏自动展开，
+    ///   目录树根目录为文件的父目录；为 false 时保持单文件模式原本的隐藏侧边栏行为。
+    func openSingleFile(_ url: URL, openContainingDirectoryInSidebar: Bool = false) {
         // 先设置单文件模式属性，再清空 rootDirectory
         // 因为 rootDirectory 的 didSet 会调用 updateWindowTitle()
         // 如果先清空 rootDirectory，此时 isSingleFileMode/singleFileURL 尚未设置
@@ -261,10 +289,55 @@ final class AppViewModel {
         singleFileURL = url
         selectedFile = nil
         rootDirectory = nil
-        if isSidebarVisible {
-            withAnimation(.spring(duration: 0.25)) {
-                isSidebarVisible = false
+
+        if openContainingDirectoryInSidebar {
+            sidebarRootDirectory = url.deletingLastPathComponent()
+            revealSidebarForTree()
+        } else {
+            sidebarRootDirectory = nil
+            if isSidebarVisible {
+                withAnimation(.spring(duration: 0.25)) {
+                    isSidebarVisible = false
+                }
             }
+        }
+    }
+
+    /// 清空单文件模式下的侧边栏目录树上下文（回到无目录上下文）。
+    func clearSidebarRootDirectory() {
+        sidebarRootDirectory = nil
+    }
+
+    /// 单文件模式下切换当前显示的文件，保留侧边栏目录树上下文。
+    ///
+    /// 在侧边栏目录树中点开其他文件、或另存为到新路径时调用：
+    /// `singleFileURL` 是窗口标题与侧边栏上下文的依据，不更新会让标题停留在旧文件。
+    /// 目录模式下不做任何事（标题由根目录决定）。
+    func updateSingleFileURL(_ url: URL) {
+        guard isSingleFileMode else { return }
+        singleFileURL = url
+        updateWindowTitle()
+    }
+
+    /// 单文件模式下按设置开关即时同步侧边栏目录树。
+    /// 非单文件模式（欢迎页 / 目录模式）不做处理。
+    func applySingleFileSidebarTreeSetting(enabled: Bool) {
+        guard isSingleFileMode, let file = singleFileURL else { return }
+        openSingleFile(file, openContainingDirectoryInSidebar: enabled)
+    }
+
+    /// 需要展示目录树时展开 Sidebar（目录模式与单文件目录树共用）。
+    ///
+    /// OpenPanel 的 sheet 正在结束时启动宽度动画，SwiftUI 偶尔会把 Sidebar
+    /// 留在动画起点（0 宽度），直到用户手动显隐两次才重新布局。
+    /// 自动进入目录上下文需要确定性布局，因此同步显示；用户主动 Cmd+\ 仍使用动画。
+    /// - 已显示 Sidebar：保留用户调整过的宽度，不重置；
+    /// - 从隐藏切到显示：若宽度无效（被收起操作压到阈值以下），恢复默认宽度。
+    private func revealSidebarForTree() {
+        guard !isSidebarVisible else { return }
+        isSidebarVisible = true
+        if sidebarWidth < Self.minSidebarWidth {
+            sidebarWidth = Self.defaultSidebarWidth
         }
     }
 

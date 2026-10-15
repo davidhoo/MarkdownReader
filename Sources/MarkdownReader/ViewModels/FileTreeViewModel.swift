@@ -55,6 +55,16 @@ final class FileTreeViewModel {
     /// 防止切换或关闭目录后，旧扫描结果重新安装监控。
     private var directoryGeneration = UUID()
 
+    /// 侧边栏目录树是否强制只列 Markdown 文件。
+    ///
+    /// 单文件模式（「打开单文档时，在侧边栏打开当前目录」）下，侧边栏是当前文档的
+    /// 上下文视图，同级目录里的图片、配置文件、`.txt` 等不属于阅读对象，因此忽略
+    /// 「显示非 Markdown 文件」设置、强制只列 Markdown（按扩展名严格过滤）。
+    /// 目录模式仍由该设置决定，`.txt` 也仍按潜在 Markdown 处理。
+    private var forcesMarkdownOnly: Bool {
+        session?.appViewModel.isSingleFileMode ?? false
+    }
+
     // MARK: - 初始化
 
     init(fileService: FileService = FileService(), settings: SettingsModel = SettingsModel.shared) {
@@ -82,7 +92,8 @@ final class FileTreeViewModel {
             let children = try await fileService.scanDirectory(
                 directory,
                 showHiddenFiles: settings.showHiddenFiles,
-                showNonMarkdownFiles: settings.showNonMarkdownFiles
+                showNonMarkdownFiles: settings.showNonMarkdownFiles,
+                markdownOnly: forcesMarkdownOnly
             )
             guard directoryGeneration == generation else { return }
             isEmptyDirectory = !fileService.directoryContainsMarkdown(
@@ -139,7 +150,8 @@ final class FileTreeViewModel {
             let children = try await fileService.scanDirectory(
                 dir,
                 showHiddenFiles: settings.showHiddenFiles,
-                showNonMarkdownFiles: settings.showNonMarkdownFiles
+                showNonMarkdownFiles: settings.showNonMarkdownFiles,
+                markdownOnly: forcesMarkdownOnly
             )
             guard directoryGeneration == generation else { return }
 
