@@ -241,13 +241,14 @@ input[type="checkbox"]:checked {
   border-radius: calc(var(--border-radius) + 2px);
   padding: 16px;
   border: 1px solid var(--border);
-  /* Pele 读这些变量上色。Mermaid.js 把颜色烘进 SVG，不会使用它们。 */
-  --pele-bg: var(--bg-elevated);
+  /* Pele 读这些变量上色。Mermaid.js 把颜色烘进 SVG，不会使用它们。
+     底色跟阅读表面走，节点只比表面浅浅抬起。 */
+  --pele-bg: var(--diagram-bg, var(--surface));
   --pele-fg: var(--ink);
   --pele-muted: var(--fg-muted);
   --pele-line: var(--fg-secondary);
-  --pele-surface: var(--bg-subtle);
-  --pele-surface-alt: var(--bg-muted);
+  --pele-surface: var(--diagram-node, var(--bg-subtle));
+  --pele-surface-alt: var(--diagram-cluster, var(--bg-muted));
   --pele-border: var(--border);
   --pele-accent: var(--accent);
   --pele-critical: var(--danger);
@@ -260,6 +261,11 @@ input[type="checkbox"]:checked {
 .mermaid-container .pele {
   max-width: 100%;
   height: auto;
+}
+
+.mermaid-container:has(.pele) {
+  background: var(--diagram-bg, var(--surface));
+  border-color: var(--border-subtle);
 }
 
 .mermaid-error {

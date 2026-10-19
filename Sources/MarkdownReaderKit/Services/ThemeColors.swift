@@ -41,6 +41,12 @@ public struct ThemeColors: Equatable, Sendable {
     // MARK: - CSS Custom Properties
 
     public var cssCustomProperties: String {
+        let surfaceNS = NSColor(surface).usingColorSpace(.sRGB) ?? NSColor.black
+        let inkNS = NSColor(ink).usingColorSpace(.sRGB) ?? NSColor.white
+        let isDark = surfaceNS.perceivedBrightness < inkNS.perceivedBrightness
+        // 图表底色贴着阅读表面。节点和分组只轻轻抬起，避免再叠一层偏重的卡片灰。
+        let diagramNode = cssHex(surface.mixed(with: ink, fraction: isDark ? 0.06 : 0.04))
+        let diagramCluster = cssHex(surface.mixed(with: ink, fraction: isDark ? 0.035 : 0.02))
         var css = """
         :root {
           --surface: \(cssHex(surface));
@@ -57,6 +63,9 @@ public struct ThemeColors: Equatable, Sendable {
           --accent-soft: \(cssRGBA(accentSoft));
           --border: \(cssRGBA(border));
           --border-subtle: \(cssRGBA(borderSubtle));
+          --diagram-bg: \(cssHex(surface));
+          --diagram-node: \(diagramNode);
+          --diagram-cluster: \(diagramCluster);
         """
         if let bodyFontFamily { css += "\n  --font-body: \(bodyFontFamily);" }
         if let headingFontFamily { css += "\n  --font-heading: \(headingFontFamily);" }
