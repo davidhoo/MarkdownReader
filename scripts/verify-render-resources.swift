@@ -7,7 +7,7 @@ import Foundation
 //
 // 验证内容：
 // 1. 静态清单门禁：调用生产环境 MarkdownResourceLocator，检查主应用与 QL 扩展中必需 CSS、JS、Prism、KaTeX、字体及 Mermaid。
-// 2. 裁剪验证：确认 QL 扩展未打包冗余 Mermaid。
+// 2. Quick Look 同时带上 Mermaid.js 与 Pele，预览跟随设置里的图表引擎。
 // 3. 通过 open -n 启动待验收 .app 的自检入口，验证它实际链接的渲染代码。
 //    此工具只检查资源清单及主程序回执，不编译另一份 WebPage/handler 替代主程序。
 
@@ -47,7 +47,8 @@ struct VerifyRenderResources {
             "js/prism-autoloader.min.js",
             "js/prism-swift.min.js",
             "js/katex.min.js",
-            "js/mermaid.min.js"
+            "js/mermaid.min.js",
+            "js/pele.global.js"
         ]
 
         print("📦 验证主应用必需资源清单（通过 MarkdownResourceLocator）...")
@@ -88,7 +89,9 @@ struct VerifyRenderResources {
                 "css/fonts/KaTeX_Main-Regular.woff2",
                 "js/markdown-reader.js",
                 "js/prism-core.min.js",
-                "js/katex.min.js"
+                "js/katex.min.js",
+                "js/mermaid.min.js",
+                "js/pele.global.js"
             ]
             var missingQL: [String] = []
             for res in qlRequiredResources {
@@ -109,21 +112,6 @@ struct VerifyRenderResources {
                 exit(1)
             }
             print("   ✅ Quick Look Extension \(qlRequiredResources.count) 项必需资源就绪且非空")
-
-            // 检查 Mermaid 是否已成功从 QL Extension 中裁剪
-            let appexInternalBundle = qlAppexURL.appendingPathComponent("Contents/Resources/MarkdownReader_MarkdownReader.bundle")
-            let internalMermaidPaths = [
-                appexInternalBundle.appendingPathComponent("Contents/Resources/Resources/js/mermaid.min.js"),
-                appexInternalBundle.appendingPathComponent("Contents/Resources/js/mermaid.min.js"),
-                appexInternalBundle.appendingPathComponent("Resources/js/mermaid.min.js")
-            ]
-            for path in internalMermaidPaths {
-                if FileManager.default.fileExists(atPath: path.path) {
-                    fputs("❌ Quick Look Extension 未按预期裁剪 mermaid.min.js（应省 ~3.1MB）: \(path.path)\n", stderr)
-                    exit(1)
-                }
-            }
-            print("   ✅ Quick Look Extension 裁剪验证通过")
         }
 
         // MARK: - 3. 启动待发布的实际主程序，而不是用验证器的代码渲染资源

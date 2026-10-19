@@ -515,7 +515,8 @@ struct DetailView: View {
                     contentPadding: settings.contentPaddingPoints,
                     maxContentWidthFollowsWindow: settings.maxContentWidthFollowsWindow,
                     baseURL: baseURL,
-                    isDark: settings.resolvedThemeType == .dark
+                    isDark: settings.resolvedThemeType == .dark,
+                    diagramEngine: settings.diagramRenderEngine
                 )
                 data = try await PDFExportService.export(
                     html: html,
@@ -677,6 +678,7 @@ struct DetailView: View {
          themeCSS: themeColors.cssCustomProperties + themeColors.codeHighlightCSS,
        isDark: settings.resolvedThemeType == .dark,
         documentCopyEnabled: settings.enableDocumentCopy,
+        diagramEngine: settings.diagramRenderEngine,
            searchQuery: findReplaceViewModel.searchText,
            searchCaseSensitive: findReplaceViewModel.isCaseSensitive,
            searchWholeWord: findReplaceViewModel.isWholeWord,

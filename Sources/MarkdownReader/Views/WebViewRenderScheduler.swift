@@ -3,7 +3,7 @@ import MarkdownReaderKit
 
 /// WebView 渲染触发的最终状态快照。
 ///
-/// 只表示 WebView 实际需要渲染的状态（文件身份、内容、强制刷新世代），
+/// 只表示 WebView 实际需要渲染的状态（文件身份、内容、强制刷新世代、图表引擎），
 /// 不包含主题、padding、查找或缩放——这些继续走独立的局部 JavaScript 更新，
 /// 不应被误升级为完整页面重载。详见
 /// `docs/plans/2026-08-12-webview-render-trigger-coalescing-design.md`。
@@ -11,6 +11,9 @@ struct WebViewRenderSnapshot: Equatable {
     let fileURL: URL?
     let content: String
     let contentVersion: Int
+    /// 图表引擎属于页面壳（加载哪一份脚本），变化必须整页重载。
+    /// 默认 Mermaid.js，让未显式传入的调用保持原有快照语义。
+    var diagramEngine: DiagramRenderEngine = .mermaid
 }
 
 /// `WebViewRenderPolicy.action(previous:next:)` 的可选结果。
@@ -20,14 +23,15 @@ enum WebViewRenderAction: Equatable {
     case loadPage
 }
 
-/// 纯渲染决策：依据“文件身份、内容、强制刷新世代”选择渲染动作。
+/// 纯渲染决策：依据“文件身份、内容、强制刷新世代、图表引擎”选择渲染动作。
 ///
 /// 与 SwiftUI/WebKit 无关，以便单元测试锁定规则：
 /// 1. 没有已应用快照：`loadPage`；
 /// 2. `fileURL` 改变：`loadPage`（资源基路径、滚动重置、整页初始化均属新文档）；
 /// 3. `contentVersion` 改变：`loadPage`（保留 Reload、外部刷新及同内容强制刷新语义）；
 /// 4. 仅 `content` 改变：`replaceContent`；
-/// 5. 三项都相同：`none`。
+/// 5. `diagramEngine` 改变：`loadPage`（页面壳里的图表脚本不同，已加载库无法卸载）；
+/// 6. 其余都相同：`none`。
 enum WebViewRenderPolicy {
     static func action(
         previous: WebViewRenderSnapshot?,
@@ -36,6 +40,7 @@ enum WebViewRenderPolicy {
         guard let previous else { return .loadPage }
         guard previous.fileURL == next.fileURL else { return .loadPage }
         guard previous.contentVersion == next.contentVersion else { return .loadPage }
+        guard previous.diagramEngine == next.diagramEngine else { return .loadPage }
         return previous.content == next.content ? .none : .replaceContent
     }
 }
@@ -247,14 +252,15 @@ public enum WebViewRenderReadinessPolicy {
 
 /// 文档输入变更的种类，用于渲染闸门判断。
 ///
-/// 只区分四个驱动 `requestRender` 的来源：纯内容编辑、文件切换、强制刷新世代、
-/// 显示模式切换。它不携带具体值，仅作 eligibility 判定的标签，保持策略与
+/// 只区分驱动 `requestRender` 的来源：纯内容编辑、文件切换、强制刷新世代、
+/// 显示模式切换、图表引擎切换。它不携带具体值，仅作 eligibility 判定的标签，保持策略与
 /// SwiftUI/WebKit 无关。
 enum WebViewRenderChange {
     case content
     case fileURL
     case contentVersion
     case displayMode
+    case diagramEngine
 }
 
 /// 纯渲染闸门：决定某类文档输入变更是否应当请求隐藏的常驻 WebView 重渲染。
@@ -266,6 +272,7 @@ enum WebViewRenderChange {
 ///   切到 Rendered 时已是最新文件。
 /// - `contentVersion`：始终请求，保留 Reload、外部刷新及同内容强制刷新语义。
 /// - `displayMode`：仅进入 Rendered 时请求最新快照；切回 Raw 不请求（无意义）。
+/// - `diagramEngine`：始终请求。隐藏 WebView 也要换上对应脚本，切回渲染时不用再等一次加载。
 enum WebViewRenderEligibility {
     static func shouldRequest(
         change: WebViewRenderChange,
@@ -274,7 +281,7 @@ enum WebViewRenderEligibility {
         switch change {
         case .content:
             return isRenderedMode
-        case .fileURL, .contentVersion:
+        case .fileURL, .contentVersion, .diagramEngine:
             return true
         case .displayMode:
             return isRenderedMode

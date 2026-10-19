@@ -32,7 +32,7 @@ public enum MarkdownResourceLocator {
         }
 
         // 扩展与主应用各自解析自己的 bundle。不向上搜宿主 App，
-        // 否则 Quick Look 会读到主应用里未裁剪的 mermaid.min.js。
+        // 否则 Quick Look 会读到主应用资源，而不是扩展包里随设置选中的图表脚本。
 
         // 3. 去重保序
         var seen = Set<String>()

@@ -63,6 +63,22 @@ struct GeneralSettingsView: View {
 
             SettingsDivider()
 
+            // 图表引擎：Mermaid.js / Pele。切换后阅读页整页重载以换脚本。
+            SettingsSection(
+                title: L10n.tr(.settingsGeneralDiagramEngineTitle, language: language),
+                description: L10n.tr(.settingsGeneralDiagramEngineDesc, language: language)
+            ) {
+                Picker("", selection: $settings.diagramRenderEngine) {
+                    Text(L10n.tr(.diagramEngineMermaid, language: language)).tag(DiagramRenderEngine.mermaid)
+                    Text(L10n.tr(.diagramEnginePele, language: language)).tag(DiagramRenderEngine.pele)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 240, alignment: .leading)
+            }
+
+            SettingsDivider()
+
             // 渲染宽度
             SettingsSection(
                 title: L10n.tr(.settingsGeneralRenderedWidthTitle, language: language),

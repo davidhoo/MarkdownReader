@@ -28,6 +28,8 @@ public enum SharedPreferenceKey {
     public static let enableDocumentCopy = "com.markdownreader.enableDocumentCopy"
     /// Quick Look 整篇内容复制格式（`QuickLookDocumentCopyFormat.rawValue`）。
     public static let quickLookDocumentCopyFormat = "com.markdownreader.quickLookDocumentCopyFormat"
+    /// Mermaid 图表绘制引擎（`DiagramRenderEngine.rawValue`）。
+    public static let diagramRenderEngine = "com.markdownreader.diagramRenderEngine"
 }
 
 /// Quick Look 预览每次 `preparePreviewOfFile` 时从主应用 preference 域解析的设置快照。

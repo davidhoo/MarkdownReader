@@ -70,6 +70,7 @@ final class SettingsModel {
         static let enableQuickLookPreview = SharedPreferenceKey.enableQuickLookPreview
         static let enableDocumentCopy     = SharedPreferenceKey.enableDocumentCopy
         static let quickLookDocumentCopyFormat = SharedPreferenceKey.quickLookDocumentCopyFormat
+        static let diagramRenderEngine = SharedPreferenceKey.diagramRenderEngine
     }
 
     private let defaults: UserDefaults
@@ -159,6 +160,12 @@ final class SettingsModel {
     /// 默认富文本；仅在新 key 缺失时写入，绝不覆盖已有用户值。
     var quickLookDocumentCopyFormat: QuickLookDocumentCopyFormat {
         didSet { defaults.set(quickLookDocumentCopyFormat.rawValue, forKey: Keys.quickLookDocumentCopyFormat) }
+    }
+
+    /// Mermaid 图表绘制引擎。默认 Mermaid.js，保持已有文档的布局。
+    /// Quick Look 通过 CFPreferences 读取同一 key；缺失时主应用写入 `.mermaid`。
+    var diagramRenderEngine: DiagramRenderEngine {
+        didSet { defaults.set(diagramRenderEngine.rawValue, forKey: Keys.diagramRenderEngine) }
     }
 
     // MARK: - 自动更新
@@ -457,6 +464,13 @@ final class SettingsModel {
         self.quickLookDocumentCopyFormat = QuickLookDocumentCopyFormat(
             rawValue: defaults.string(forKey: Keys.quickLookDocumentCopyFormat) ?? ""
         ) ?? .richText
+        // 图表引擎默认 Mermaid.js。写入后 Quick Look 才能从主应用 preference 域读到。
+        if defaults.object(forKey: Keys.diagramRenderEngine) == nil {
+            defaults.set(DiagramRenderEngine.mermaid.rawValue, forKey: Keys.diagramRenderEngine)
+        }
+        self.diagramRenderEngine = DiagramRenderEngine(
+            rawValue: defaults.string(forKey: Keys.diagramRenderEngine) ?? ""
+        ) ?? .mermaid
         self.skippedVersion = defaults.string(forKey: Keys.skippedVersion)
         self.lastUpdateCheckTime = defaults.object(forKey: Keys.lastUpdateCheckTime) as? Date
         self.appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ?? .system

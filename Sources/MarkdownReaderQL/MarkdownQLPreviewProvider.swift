@@ -43,6 +43,7 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
         let enableCopyKey = SharedPreferenceKey.enableDocumentCopy as CFString
         let formatKey = SharedPreferenceKey.quickLookDocumentCopyFormat as CFString
         let languagePrefKey = SharedPreferenceKey.languagePref as CFString
+        let diagramEngineKey = SharedPreferenceKey.diagramRenderEngine as CFString
 
         let quickLookEnabled = Self.cfPreferenceBool(
             key: enableQLKey,
@@ -61,6 +62,8 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
         )
         let storedFormat = Self.cfPreferenceString(key: formatKey, applicationID: appID)
         let storedLanguagePref = Self.cfPreferenceString(key: languagePrefKey, applicationID: appID)
+        let storedDiagramEngine = Self.cfPreferenceString(key: diagramEngineKey, applicationID: appID)
+        let diagramEngine = DiagramRenderEngine(rawValue: storedDiagramEngine ?? "") ?? .mermaid
         let detectedLanguage = LanguageService.detectLanguage()
 
         // 对文件及其所在目录获取 security-scoped access，
@@ -133,7 +136,8 @@ final class MarkdownQLPreviewProvider: NSViewController, QLPreviewingController 
             hasMermaid: hasMermaid,
             hasKaTeX: hasKaTeX,
             inlineImages: true,
-            documentCopyConfiguration: baseConfiguration
+            documentCopyConfiguration: baseConfiguration,
+            diagramEngine: diagramEngine
         )
 
         // 诊断日志：检查 HTML 中是否包含 data: URL（内联图片成功）

@@ -86,6 +86,8 @@ struct WebViewMarkdownView: View {
     /// 内容一键复制总开关：控制阅读页右上角整篇内容复制按钮。运行时切换走
     /// 无重载 JavaScript bridge（`MR.setDocumentCopyButtonEnabled`），不触发 requestRender。
     var documentCopyEnabled: Bool = true
+    /// Mermaid 图表引擎。变化时整页重载以切换脚本，不走增量 `replaceContent`。
+    var diagramEngine: DiagramRenderEngine = .mermaid
     var searchQuery: String = ""
     var searchCaseSensitive: Bool = false
     var searchWholeWord: Bool = false
@@ -204,6 +206,7 @@ struct WebViewMarkdownView: View {
                searchWholeWord: searchWholeWord,
                searchCurrentIndex: searchCurrentIndex,
                displayScale: displayScale,
+               diagramEngine: diagramEngine,
               onRequestRenderIfNeeded: requestRenderIfNeeded,
               onScrollToLineChange: handleScrollToLineChange,
              onScrollTransferChange: handleScrollTransferChange,
@@ -512,7 +515,8 @@ struct WebViewMarkdownView: View {
         let next = WebViewRenderSnapshot(
             fileURL: fileURL,
             content: content,
-            contentVersion: contentVersion
+            contentVersion: contentVersion,
+            diagramEngine: diagramEngine
         )
 
         switch WebViewRenderPolicy.action(previous: lastAppliedRender, next: next) {
@@ -609,7 +613,8 @@ struct WebViewMarkdownView: View {
             baseURL: baseURL,
             isDark: isDark,
             documentCopyConfiguration: documentCopyConfiguration,
-            runtimeRequirements: runtimeRequirements
+            runtimeRequirements: runtimeRequirements,
+            diagramEngine: snapshot.diagramEngine
         )
 
         scrollPosition = ScrollPosition(edge: .top)
@@ -1033,6 +1038,7 @@ private struct DocumentContentEventsModifier: ViewModifier {
     let searchWholeWord: Bool
     let searchCurrentIndex: Int
     let displayScale: CGFloat
+    let diagramEngine: DiagramRenderEngine
     /// 按变更种类走渲染闸门：`.content` 仅 Rendered 请求；`.fileURL`/`.contentVersion`/
     /// `.displayScale` 始终请求（预热隐藏 WebView）；`.displayMode` 仅进入 Rendered 请求。
     let onRequestRenderIfNeeded: (WebViewRenderChange) -> Void
@@ -1075,5 +1081,6 @@ private struct DocumentContentEventsModifier: ViewModifier {
             .onChange(of: searchCurrentIndex) { _, newValue in onSetSearchCurrent(newValue) }
             // 屏幕倍率变化需重载注入对应缓存图标 CSS 变量，始终请求，与模式无关。
             .onChange(of: displayScale) { _, _ in onRequestRenderIfNeeded(.contentVersion) }
+            .onChange(of: diagramEngine) { _, _ in onRequestRenderIfNeeded(.diagramEngine) }
     }
 }

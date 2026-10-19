@@ -298,15 +298,8 @@ if [ -d "${BUILD_DIR}/${APP_NAME}_MarkdownReader.bundle" ]; then
         fi
     done
 
-    # QL Extension 不需要 mermaid（Quick Look 预览不渲染复杂图表，省 3.1 MB）
-    for mermaid_file in "${QL_BUNDLE}/Resources/js/mermaid.min.js" \
-                        "${QL_BUNDLE}/Contents/Resources/Resources/js/mermaid.min.js" \
-                        "${QL_BUNDLE}/Contents/Resources/js/mermaid.min.js"; do
-        if [ -f "$mermaid_file" ]; then
-            rm -f "$mermaid_file"
-            echo "🗑️  移除 QL Extension bundle 中 mermaid.min.js（省 ~3.1 MB）: $mermaid_file"
-        fi
-    done
+    # 图表引擎可在设置里切换，Quick Look 要跟主应用读到的引擎一致，
+    # 因此 mermaid.min.js 与 pele.global.js 都留在扩展包里。
 fi
 
 # 复制依赖包的资源 bundle 到 Extension

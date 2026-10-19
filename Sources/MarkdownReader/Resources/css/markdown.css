@@ -241,6 +241,25 @@ input[type="checkbox"]:checked {
   border-radius: calc(var(--border-radius) + 2px);
   padding: 16px;
   border: 1px solid var(--border);
+  /* Pele 读这些变量上色。Mermaid.js 把颜色烘进 SVG，不会使用它们。 */
+  --pele-bg: var(--bg-elevated);
+  --pele-fg: var(--ink);
+  --pele-muted: var(--fg-muted);
+  --pele-line: var(--fg-secondary);
+  --pele-surface: var(--bg-subtle);
+  --pele-surface-alt: var(--bg-muted);
+  --pele-border: var(--border);
+  --pele-accent: var(--accent);
+  --pele-critical: var(--danger);
+  --pele-error: var(--danger);
+  --pele-font: var(--font-body);
+  --pele-font-mono: var(--font-code);
+  --pele-radius: var(--border-radius);
+}
+
+.mermaid-container .pele {
+  max-width: 100%;
+  height: auto;
 }
 
 .mermaid-error {

@@ -27,6 +27,12 @@ public enum L10n {
         case settingsGeneralDisplayTitle
         case settingsGeneralDisplayMode
 
+        // 设置 - 图表引擎
+        case settingsGeneralDiagramEngineTitle
+        case settingsGeneralDiagramEngineDesc
+        case diagramEngineMermaid
+        case diagramEnginePele
+
         // 设置 - 渲染宽度
         case settingsGeneralRenderedWidthTitle
         case settingsGeneralRenderedWidthDesc
@@ -301,6 +307,10 @@ public enum L10n {
         .settingsGeneralLanguageDesc: "Choose the interface language. \"Auto\" follows your system.",
         .settingsGeneralDisplayTitle: "Display",
         .settingsGeneralDisplayMode: "Default display mode",
+        .settingsGeneralDiagramEngineTitle: "Diagram engine",
+        .settingsGeneralDiagramEngineDesc: "Mermaid.js keeps the current layout. Pele is faster and follows the app theme; node positions differ.",
+        .diagramEngineMermaid: "Mermaid.js",
+        .diagramEnginePele: "Pele",
         .settingsGeneralRenderedWidthTitle: "Rendered Width",
         .settingsGeneralRenderedWidthDesc: "Control the maximum width of rendered content. When off, a fixed width is used.",
         .settingsGeneralMaxWidthFollowsWindow: "Follow window width",
@@ -506,6 +516,10 @@ public enum L10n {
         .settingsGeneralLanguageDesc: "选择应用界面的语言。「自动检测」会跟随系统。",
         .settingsGeneralDisplayTitle: "显示",
         .settingsGeneralDisplayMode: "默认显示模式",
+        .settingsGeneralDiagramEngineTitle: "图表引擎",
+        .settingsGeneralDiagramEngineDesc: "Mermaid.js 保持现有布局。Pele 更快，颜色跟随应用主题，节点位置会不同。",
+        .diagramEngineMermaid: "Mermaid.js",
+        .diagramEnginePele: "Pele",
         .settingsGeneralRenderedWidthTitle: "渲染宽度",
         .settingsGeneralRenderedWidthDesc: "控制渲染内容的最大宽度。关闭时使用固定宽度。",
         .settingsGeneralMaxWidthFollowsWindow: "跟随窗口宽度",
@@ -711,6 +725,10 @@ public enum L10n {
         .settingsGeneralLanguageDesc: "選擇應用介面的語言。「自動偵測」會跟隨系統。",
         .settingsGeneralDisplayTitle: "顯示",
         .settingsGeneralDisplayMode: "預設顯示模式",
+        .settingsGeneralDiagramEngineTitle: "圖表引擎",
+        .settingsGeneralDiagramEngineDesc: "Mermaid.js 維持現有版面。Pele 更快，顏色跟隨應用主題，節點位置會不同。",
+        .diagramEngineMermaid: "Mermaid.js",
+        .diagramEnginePele: "Pele",
         .settingsGeneralRenderedWidthTitle: "渲染寬度",
         .settingsGeneralRenderedWidthDesc: "控制渲染內容的最大寬度。關閉時使用固定寬度。",
         .settingsGeneralMaxWidthFollowsWindow: "跟隨視窗寬度",

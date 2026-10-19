@@ -75,6 +75,20 @@ final class WebViewRenderSchedulerTests: XCTestCase {
         )
     }
 
+    func testDiagramEngineChangeTriggersFullPageLoad() {
+        let previous = WebViewRenderSnapshot(
+            fileURL: url("a.md"), content: "# A", contentVersion: 1, diagramEngine: .mermaid
+        )
+        let next = WebViewRenderSnapshot(
+            fileURL: url("a.md"), content: "# A", contentVersion: 1, diagramEngine: .pele
+        )
+
+        XCTAssertEqual(
+            WebViewRenderPolicy.action(previous: previous, next: next),
+            .loadPage
+        )
+    }
+
     func testIdenticalSnapshotIsNoOp() {
         let previous = WebViewRenderSnapshot(
             fileURL: url("a.md"), content: "# A", contentVersion: 1
@@ -193,6 +207,15 @@ final class WebViewRenderSchedulerTests: XCTestCase {
     func testRenderedContentEditRequestsWebViewRender() {
         XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
             change: .content, isRenderedMode: true
+        ))
+    }
+
+    func testDiagramEngineChangePrewarmsWhileRaw() {
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .diagramEngine, isRenderedMode: false
+        ))
+        XCTAssertTrue(WebViewRenderEligibility.shouldRequest(
+            change: .diagramEngine, isRenderedMode: true
         ))
     }
 

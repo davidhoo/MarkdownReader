@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **图表引擎可选**：设置 → 通用新增「图表引擎」，默认 Mermaid.js。可选 Pele（1.6.0）：同一段 ` ```mermaid ` 同步画成 SVG，颜色跟随应用主题，节点布局与 Mermaid.js 不同。切换后阅读页整页重载。Quick Look 读取同一偏好，扩展包同时保留两份脚本。Pele 不启用图内缩放，正文选择与复制路径不变。
+
 ### 已知遗留（后续处理）
 
 - `ContentView.handleDeletedFileWithUnsavedChanges` 仍用 `NSAlert.runModal()`（应用级 modal，多窗口下阻塞所有窗口）；Save/SaveAs/ExportPDF 面板已改窗口级 sheet，但文件被外部删除的未保存确认 alert 尚未统一，待改为 `beginSheetModal(for: window)`

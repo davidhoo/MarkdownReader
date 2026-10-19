@@ -176,8 +176,45 @@
       container.innerHTML = '';
       const errBox = document.createElement('div');
       errBox.className = 'mermaid-error';
-      errBox.innerHTML = '<strong>Mermaid</strong> — ' + msg;
+      const title = document.createElement('strong');
+      title.textContent = 'Mermaid';
+      errBox.appendChild(title);
+      errBox.appendChild(document.createTextNode(' — ' + msg));
       container.appendChild(errBox);
+    },
+
+    /// Pele `mount()` 返回值。换内容前 destroy，避免 ResizeObserver 留在已卸载节点上。
+    _peleMounts: [],
+
+    _destroyPeleMounts() {
+      for (const mounted of MR._peleMounts) {
+        if (mounted && typeof mounted.destroy === 'function') {
+          mounted.destroy();
+        }
+      }
+      MR._peleMounts = [];
+    },
+
+    _diagramErrorDetail(err) {
+      const raw = (err && err.message) ? String(err.message) : String(err);
+      return raw.substring(0, 200);
+    },
+
+    _mountPeleDiagram(container, source) {
+      const mounted = pele.mount(container, source, {
+        zoom: false,
+        autoDirection: false,
+        links: true,
+        images: false,
+        linkRel: 'noopener',
+        onError(error) {
+          MR._showMermaidError(container, MR._diagramErrorDetail(error));
+        }
+      });
+      MR._peleMounts.push(mounted);
+      if (mounted && mounted.error) {
+        MR._showMermaidError(container, MR._diagramErrorDetail(mounted.error));
+      }
     },
 
     async _encodePlantUML(text) {
@@ -227,8 +264,37 @@
     },
 
     renderMermaid() {
+      MR._destroyPeleMounts();
       const mermaidBlocks = document.querySelectorAll('code.language-mermaid, pre code.language-mermaid');
       if (mermaidBlocks.length === 0) return;
+
+      if (typeof mermaid === 'undefined' && typeof pele !== 'undefined') {
+        mermaidBlocks.forEach(block => {
+          const pre = block.parentElement;
+          if (!pre || pre.tagName !== 'PRE') return;
+          const source = block.textContent;
+          const container = document.createElement('div');
+          container.className = 'mermaid-container';
+          container.dataset.mermaidSource = source;
+          pre.replaceWith(container);
+          try {
+            MR._mountPeleDiagram(container, source);
+          } catch (err) {
+            console.error('[MarkdownReader] pele.mount error:', err);
+            MR._showMermaidError(container, MR._diagramErrorDetail(err));
+          }
+        });
+        // 首次 mount 时容器宽度可能还是 0。下一帧 refresh 只在宽度或字体变化时重画。
+        requestAnimationFrame(() => {
+          for (const mounted of MR._peleMounts) {
+            if (mounted && typeof mounted.refresh === 'function') {
+              mounted.refresh();
+            }
+          }
+        });
+        return;
+      }
+
       if (typeof mermaid === 'undefined') return;
 
       const { isDark, themeVariables } = MR._resolveThemeColors();
@@ -254,8 +320,7 @@
           if (bindFunctions) bindFunctions(container);
         }).catch(err => {
           console.error('[MarkdownReader] mermaid.render error:', err);
-          const detail = (err && err.message) ? String(err.message).substring(0, 200) : String(err).substring(0, 200);
-          MR._showMermaidError(container, '渲染失败：' + detail);
+          MR._showMermaidError(container, '渲染失败：' + MR._diagramErrorDetail(err));
         });
         pre.replaceWith(container);
       });
@@ -264,6 +329,16 @@
     rerenderMermaid() {
       const containers = document.querySelectorAll('.mermaid-container');
       if (containers.length === 0) return;
+
+      if (typeof mermaid === 'undefined' && typeof pele !== 'undefined') {
+        for (const mounted of MR._peleMounts) {
+          if (mounted && typeof mounted.refresh === 'function') {
+            mounted.refresh();
+          }
+        }
+        return;
+      }
+
       if (typeof mermaid === 'undefined') return;
 
       const { isDark, themeVariables } = MR._resolveThemeColors();
@@ -285,8 +360,7 @@
           if (bindFunctions) bindFunctions(container);
         }).catch(err => {
           console.error('[MarkdownReader] mermaid rerender error:', err);
-          const detail = (err && err.message) ? String(err.message).substring(0, 200) : String(err).substring(0, 200);
-          MR._showMermaidError(container, '渲染失败：' + detail);
+          MR._showMermaidError(container, '渲染失败：' + MR._diagramErrorDetail(err));
         });
       });
     },

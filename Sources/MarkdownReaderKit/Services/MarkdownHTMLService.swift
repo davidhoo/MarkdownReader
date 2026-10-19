@@ -83,7 +83,7 @@ public enum MarkdownHTMLService {
         )
     }
 
-    public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled, runtimeRequirements: MarkdownRuntimeRequirements = .all) -> String {
+    public static func buildFullHTML(content: String, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled, runtimeRequirements: MarkdownRuntimeRequirements = .all, diagramEngine: DiagramRenderEngine = .mermaid) -> String {
         buildFullHTML(
             renderResult: render(content, baseURL: baseURL),
             themeCSS: themeCSS,
@@ -92,13 +92,14 @@ public enum MarkdownHTMLService {
             baseURL: baseURL,
             isDark: isDark,
             documentCopyConfiguration: documentCopyConfiguration,
-            runtimeRequirements: runtimeRequirements
+            runtimeRequirements: runtimeRequirements,
+            diagramEngine: diagramEngine
         )
     }
 
     /// 以已有 `RenderResult` 装配完整 HTML 页面壳。不接收原始 Markdown，也不再次调用
     /// `render`，仅供调用方（如 WebView 完整加载）复用单次解析结果，避免重复 Markdown 预处理与解析。
-    public static func buildFullHTML(renderResult: RenderResult, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled, runtimeRequirements: MarkdownRuntimeRequirements = .all) -> String {
+    public static func buildFullHTML(renderResult: RenderResult, themeCSS: String, contentPadding: CGFloat, maxContentWidthFollowsWindow: Bool = false, baseURL: URL?, isDark: Bool = true, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled, runtimeRequirements: MarkdownRuntimeRequirements = .all, diagramEngine: DiagramRenderEngine = .mermaid) -> String {
         let baseURLAttr = baseURL != nil ? " data-base-url=\"\(baseURL!.path.addingXMLAttributeEscapes)\"" : ""
         let previewAttrs = Self.documentCopyPreviewAttributes(documentCopyConfiguration)
         let copyIconVars = documentCopyConfiguration.webIcons.cssFragment
@@ -109,7 +110,7 @@ public enum MarkdownHTMLService {
             ? "<link rel=\"stylesheet\" href=\"mr:///css/katex.min.css\">"
             : ""
         let mermaidScript = runtimeRequirements.requiresMermaid
-            ? "<script src=\"mr:///js/mermaid.min.js\"></script>"
+            ? diagramEngine.scriptTag
             : ""
         let katexScript = runtimeRequirements.requiresKaTeX
             ? "<script src=\"mr:///js/katex.min.js\"></script>"
@@ -147,7 +148,7 @@ public enum MarkdownHTMLService {
         """
     }
 
-    public static func buildContentAwareHTML(content: String, themeCSS: String, contentPadding: CGFloat, baseURL: URL?, isDark: Bool, hasMermaid: Bool, hasKaTeX: Bool, inlineImages: Bool = false, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled) -> String {
+    public static func buildContentAwareHTML(content: String, themeCSS: String, contentPadding: CGFloat, baseURL: URL?, isDark: Bool, hasMermaid: Bool, hasKaTeX: Bool, inlineImages: Bool = false, documentCopyConfiguration: DocumentCopyPageConfiguration = .disabled, diagramEngine: DiagramRenderEngine = .mermaid) -> String {
         let renderResult = inlineImages ? renderWithInlineImages(content, baseURL: baseURL) : render(content, baseURL: baseURL)
 
         let baseURLAttr = baseURL != nil ? " data-base-url=\"\(baseURL!.path.addingXMLAttributeEscapes)\"" : ""
@@ -156,7 +157,7 @@ public enum MarkdownHTMLService {
 
         var scriptTags = ""
         if hasMermaid {
-            scriptTags += "<script src=\"mr:///js/mermaid.min.js\"></script>\n"
+            scriptTags += diagramEngine.scriptTag + "\n"
         }
         if hasKaTeX {
             scriptTags += "<script src=\"mr:///js/katex.min.js\"></script>\n"

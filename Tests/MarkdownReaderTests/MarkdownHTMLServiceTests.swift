@@ -160,7 +160,68 @@ final class MarkdownHTMLServiceTests: XCTestCase {
         )
 
         XCTAssertFalse(html.contains("mr:///js/mermaid.min.js"))
+        XCTAssertFalse(html.contains("mr:///js/pele.global.js"))
         XCTAssertTrue(html.contains("mr:///js/katex.min.js"))
         XCTAssertTrue(html.contains("mr:///css/katex.min.css"))
+    }
+
+    func testBuildFullHTMLUsesPeleScriptWhenEngineIsPele() {
+        let result = MarkdownHTMLService.render("```mermaid\ngraph TD\nA --> B\n```")
+
+        let html = MarkdownHTMLService.buildFullHTML(
+            renderResult: result,
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            runtimeRequirements: .init(requiresMermaid: true, requiresKaTeX: false),
+            diagramEngine: .pele
+        )
+
+        XCTAssertTrue(html.contains("mr:///js/pele.global.js"))
+        XCTAssertFalse(html.contains("mr:///js/mermaid.min.js"))
+    }
+
+    func testBuildFullHTMLOmitsPeleWhenDiagramNotRequired() {
+        let result = MarkdownHTMLService.render("# Plain")
+
+        let html = MarkdownHTMLService.buildFullHTML(
+            renderResult: result,
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            runtimeRequirements: .init(requiresMermaid: false, requiresKaTeX: false),
+            diagramEngine: .pele
+        )
+
+        XCTAssertFalse(html.contains("mr:///js/pele.global.js"))
+        XCTAssertFalse(html.contains("mr:///js/mermaid.min.js"))
+    }
+
+    func testBuildContentAwareHTMLSelectsEngineScript() {
+        let peleHTML = MarkdownHTMLService.buildContentAwareHTML(
+            content: "```mermaid\ngraph TD\nA --> B\n```",
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            isDark: false,
+            hasMermaid: true,
+            hasKaTeX: false,
+            diagramEngine: .pele
+        )
+        let mermaidHTML = MarkdownHTMLService.buildContentAwareHTML(
+            content: "```mermaid\ngraph TD\nA --> B\n```",
+            themeCSS: "",
+            contentPadding: 20,
+            baseURL: nil,
+            isDark: false,
+            hasMermaid: true,
+            hasKaTeX: false,
+            diagramEngine: .mermaid
+        )
+
+        XCTAssertTrue(peleHTML.contains("mr:///js/pele.global.js"))
+        XCTAssertFalse(peleHTML.contains("mr:///js/mermaid.min.js"))
+        XCTAssertTrue(mermaidHTML.contains("mr:///js/mermaid.min.js"))
+        XCTAssertFalse(mermaidHTML.contains("mr:///js/pele.global.js"))
     }
 }
