@@ -7,16 +7,22 @@
 
 ## [Unreleased]
 
-### 新增
-
-- **图表引擎可选**：设置 → 通用新增「图表引擎」，默认 Mermaid.js。可选 Pele（1.6.0）：同一段 ` ```mermaid ` 同步画成 SVG，颜色跟随应用主题，节点布局与 Mermaid.js 不同。切换后阅读页整页重载。Quick Look 读取同一偏好，扩展包同时保留两份脚本。Pele 不启用图内缩放，正文选择与复制路径不变。
-
 ### 已知遗留（后续处理）
 
 - `ContentView.handleDeletedFileWithUnsavedChanges` 仍用 `NSAlert.runModal()`（应用级 modal，多窗口下阻塞所有窗口）；Save/SaveAs/ExportPDF 面板已改窗口级 sheet，但文件被外部删除的未保存确认 alert 尚未统一，待改为 `beginSheetModal(for: window)`
 - `FileTreeViewModel.moveItem` 的 NSOpenPanel 仍用 `runModal()`，多窗口下阻塞，待改窗口级 sheet
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
+
+## [2.4.10] - 2026-10-19
+
+### 新增
+
+- **图表引擎可选**：设置 → 通用新增「图表引擎」，默认 Mermaid.js。可选 Pele（1.6.0）：同一段 ` ```mermaid ` 同步画成 SVG，颜色跟随应用主题，节点布局与 Mermaid.js 不同。切换后阅读页整页重载。Quick Look 读取同一偏好，扩展包同时保留两份脚本。Pele 不启用图内缩放，正文选择与复制路径不变。
+
+### 测试
+
+- 全部 359 个单元测试通过。新增/扩展图表引擎覆盖：`MarkdownHTMLService` 按引擎选择 `mermaid.min.js` / `pele.global.js`、无图时不加载脚本；`WebViewRenderScheduler` 在引擎变化时强制整页加载，源码模式下预热。
 
 ## [2.4.9] - 2026-10-15
 
