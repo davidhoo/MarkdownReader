@@ -14,6 +14,16 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.4.11] - 2026-10-19
+
+### 修复
+
+- **Pele 图底色贴合阅读表面**：Pele 图表不再叠一层偏重的卡片灰底。新增 `--diagram-bg` / `--diagram-node` / `--diagram-cluster` 语义色，底色跟当前主题 `--surface` 走，节点与分组只轻轻抬起；Pele 容器边框改用 `--border-subtle`。
+
+### 测试
+
+- 全部 360 个单元测试通过。新增 `ThemeColorsDiagramTests`：校验图底色等于主题表面、不等于 elevated 卡片色，且 node/cluster 色阶分离。
+
 ## [2.4.10] - 2026-10-19
 
 ### 新增
