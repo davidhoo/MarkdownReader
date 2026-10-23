@@ -19,7 +19,8 @@ Markdown Reader 就是为这个场景而生：
 - **没有心理负担** — 不注册、不登录、没有复杂配置，打开即用
 - **秒开秒读** — 原生 macOS 应用，启动快、切换快、阅读流畅
 - **专注阅读** — 三栏布局，目录树 + 渲染视图 + 大纲导航，一眼看清文档结构
-- **极小极轻** — DMG 安装包不到 10MB，不占空间
+- **独立多窗口** — 原生多窗口会话，多文档并排阅读，独立撤销栈
+- **极小极轻** — DMG 安装包不到 10MB，按需加载，不占空间
 
 当你不需要写作、不需要协作、不需要花哨功能，只想**快速查看 Markdown 文档**时，它就是最合适的选择。
 
@@ -30,21 +31,23 @@ Markdown Reader 就是为这个场景而生：
 | 功能 | 说明 |
 |------|------|
 | WebPage 渲染引擎 | cmark-gfm + WebPage（macOS 26 原生）渲染，完整 GFM 扩展语法 |
-| Mermaid 图表 | 流程图、时序图、甘特图等 Mermaid 图表本地渲染 |
+| 平滑模式切换 | 基于小数源码锚点管线，渲染视图与原文编辑无缝切换，精确定位不跳行、不白屏 |
+| 双图表引擎可选 | 支持经典 Mermaid.js 与原生轻量 Pele 引擎，同一段 ````mermaid` SVG 配色深度融入主题 |
 | PlantUML 图表 | 支持 PlantUML 语法，自动渲染为 SVG 图表（需要网络） |
-| 数学公式 | KaTeX 渲染 LaTeX 行内和块级公式 |
+| 数学公式 | KaTeX 渲染 LaTeX 行内和块级公式，按需轻量加载 |
 | Prism.js 代码高亮 | 30+ 语言语法高亮，Prism.js 引擎 |
+| 实时编辑与源码行号 | 原文模式直接编辑，Cmd+S 保存；可选显示源码行号（Gutter），自适应宽度 |
+| 原生多窗口 | 支持多窗口独立会话（`Shift+Cmd+N`），独立撤销栈（Per-window Undo），文档并排查阅 |
+| 智能目录树 | 递归浏览文件夹，支持目录软链接（Symlink）与实时文件变动监听；支持打开单文档时自动列出所在目录 |
+| 大纲导航 | 自动提取标题层级，点击平滑滚动并统一定位至视口顶部，阅读长文档更高效 |
 | Quick Look 预览 | Finder 中选中 .md 文件按空格即可预览渲染效果，无需打开应用 |
 | 整篇内容复制 | 渲染模式、原文模式与 Quick Look 可一键复制整篇内容；设置可统一关闭，Quick Look 可选富文本或原始 Markdown |
-| 实时编辑 | 原文模式直接编辑，Cmd+S 保存，切换文件自动保留未保存内容 |
-| 目录树 | 递归浏览文件夹，键盘导航，右键新建/重命名/删除 |
-| 大纲导航 | 自动提取标题层级，点击跳转，阅读长文档更高效 |
-| 按需加载 | Mermaid、KaTeX 等可选组件仅在文档需要时加载，普通 Markdown 阅读更轻快 |
+| 按需轻量加载 | Mermaid/Pele、KaTeX 等可选运行时仅在文档需要时加载，普通 Markdown 零多余内存开销 |
 | 33 套主题 | 20 深色 + 13 浅色，含 Markdown Preview Enhanced 风格主题，支持自定义配色和对比度调节 |
 | 多语言 | 简体中文、繁体中文、英文，自动跟随系统 |
-| 命令行工具 | `mdr` 命令从终端直接打开 Markdown 文件 |
+| 命令行工具 | `mdr` 命令从终端直接打开 Markdown 文件或目录 |
 | 命令面板 | `Cmd+P` 快速搜索并打开目录树中的文件 |
-| 窗口恢复 | 记住上次浏览位置，重新打开自动还原 |
+| 窗口恢复与系统同步 | 记住上次浏览位置，智能路径规范化去重，并与 macOS 系统「最近使用的项目」双向同步 |
 
 ---
 
@@ -52,10 +55,13 @@ Markdown Reader 就是为这个场景而生：
 
 | 快捷键 | 功能 |
 |--------|------|
-| `Cmd+O` | 打开目录 / 文件 |
 | `Cmd+N` | 新建文件 |
+| `Shift+Cmd+N` | 新建窗口 |
+| `Cmd+O` | 打开目录 / 文件 |
 | `Cmd+S` | 保存文件 |
+| `Shift+Cmd+S` | 另存为 |
 | `Cmd+Option+E` | 导出 PDF |
+| `Cmd+W` | 关闭窗口 |
 | `Cmd+,` | 打开设置 |
 | `Cmd+\` | 切换侧边栏 |
 | `Cmd+Shift+E` | 渲染模式 |
@@ -68,6 +74,7 @@ Markdown Reader 就是为这个场景而生：
 | `Cmd+Shift+G` | 查找上一个 |
 | `Cmd+Option+F` | 查找与替换 |
 | `Cmd+P` | 命令面板 |
+| `Cmd+?` | 帮助 |
 
 ---
 
@@ -114,6 +121,7 @@ Markdown Reader 的构建离不开以下开源项目：
 - [swift-markdown](https://github.com/apple/swift-markdown) — Apple 的 Swift Markdown 解析库（基于 cmark-gfm）
 - [KaTeX](https://katex.org/) — 高速 LaTeX 数学公式渲染
 - [Mermaid](https://mermaid.js.org/) — 基于文本的图表生成（流程图、时序图、甘特图等）
+- [Pele](https://github.com/mrmartineau/pele) — 轻量矢量 SVG Mermaid 图表渲染引擎
 - [Prism.js](https://prismjs.com/) — 轻量级代码语法高亮
 - [PlantUML](https://plantuml.com/) — 开源 UML 图表渲染
 

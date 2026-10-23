@@ -19,7 +19,8 @@ Markdown Reader is built for exactly that:
 - **Zero friction** — No sign-up, no login, no complex configuration. Just open and read
 - **Instant launch** — Native macOS app. Fast startup, fast switching, smooth reading
 - **Focused on reading** — Three-pane layout: file tree + rendered view + outline navigation. See document structure at a glance
-- **Tiny and lightweight** — DMG installer under 10MB, takes minimal space
+- **Independent multi-window** — Native multi-window sessions, side-by-side document viewing, per-window undo stack
+- **Tiny and lightweight** — DMG installer under 10MB, on-demand loading, minimal resource footprint
 
 When you don't need writing, collaboration, or fancy features — just want to **quickly view a Markdown document** — this is the right choice.
 
@@ -30,21 +31,23 @@ When you don't need writing, collaboration, or fancy features — just want to *
 | Feature | Description |
 |---------|-------------|
 | WebPage rendering | cmark-gfm + WebPage (native macOS 26) rendering, full GFM extension support |
-| Mermaid diagrams | Flowcharts, sequence diagrams, Gantt charts — rendered locally |
+| Seamless mode switching | Fractional source anchor pipeline preserves reading position accurately without jumping or screen flash |
+| Dual diagram engines | Choose between classic Mermaid.js and lightweight native Pele engine; same ````mermaid` syntax, SVG colors seamlessly match themes |
 | PlantUML diagrams | PlantUML syntax support, auto-renders as SVG (requires network) |
-| Math formulas | KaTeX renders LaTeX inline and block formulas |
+| Math formulas | KaTeX renders LaTeX inline and block formulas, loaded on demand |
 | Prism.js syntax highlighting | 30+ language syntax highlighting via Prism.js |
+| Live editing & line numbers | Edit in source mode, Cmd+S to save; optional gutter source line numbers with adaptive width |
+| Native multi-window | Open multiple independent windows (`Shift+Cmd+N`), per-window undo stack, conflict-free document viewing |
+| Smart file tree | Recursively browse folders, full symlink support, live file monitoring; optional auto-open containing directory for single files |
+| Outline navigation | Auto-extract heading hierarchy, smooth scroll unified to top of viewport for efficient long document reading |
 | Quick Look preview | Select a .md file in Finder and press Space to preview — no app launch needed |
 | Copy document content | Rendered mode, source mode, and Quick Look can copy an entire document in one click. Turn it off in Settings; Quick Look supports rich text or raw Markdown |
-| Live editing | Edit in source mode, Cmd+S to save, unsaved content preserved when switching files |
-| File tree | Recursively browse folders, keyboard navigation, right-click to create/rename/delete |
-| Outline navigation | Auto-extract heading hierarchy, click to jump — efficient for long documents |
-| On-demand loading | Optional components like Mermaid and KaTeX load only when a document needs them, keeping plain Markdown reading lighter |
+| On-demand loading | Optional components like Mermaid/Pele and KaTeX load only when a document needs them, keeping plain Markdown reading lighter |
 | 33 themes | 20 dark + 13 light, including Markdown Preview Enhanced style themes, with custom color and contrast controls |
 | Multi-language | Simplified Chinese, Traditional Chinese, English — auto-follows system |
-| CLI tool | `mdr` command to open Markdown files directly from the terminal |
+| CLI tool | `mdr` command to open Markdown files or folders directly from the terminal |
 | Command palette | `Cmd+P` to quickly search and open files in the file tree |
-| Window restoration | Remembers last browsing position, auto-restores on reopen |
+| Window restoration & system sync | Remembers last browsing position, intelligent path normalization, and syncs with macOS Recent Items |
 
 ---
 
@@ -52,10 +55,13 @@ When you don't need writing, collaboration, or fancy features — just want to *
 
 | Shortcut | Function |
 |----------|----------|
-| `Cmd+O` | Open folder / file |
 | `Cmd+N` | New file |
+| `Shift+Cmd+N` | New window |
+| `Cmd+O` | Open folder / file |
 | `Cmd+S` | Save file |
+| `Shift+Cmd+S` | Save as |
 | `Cmd+Option+E` | Export PDF |
+| `Cmd+W` | Close window |
 | `Cmd+,` | Open settings |
 | `Cmd+\` | Toggle sidebar |
 | `Cmd+Shift+E` | Rendered mode |
@@ -68,6 +74,7 @@ When you don't need writing, collaboration, or fancy features — just want to *
 | `Cmd+Shift+G` | Find previous |
 | `Cmd+Option+F` | Find and replace |
 | `Cmd+P` | Command palette |
+| `Cmd+?` | Help |
 
 ---
 
@@ -114,6 +121,7 @@ Markdown Reader is built on the following open-source projects:
 - [swift-markdown](https://github.com/apple/swift-markdown) — Apple's Swift Markdown parsing library (based on cmark-gfm)
 - [KaTeX](https://katex.org/) — Fast LaTeX math formula rendering
 - [Mermaid](https://mermaid.js.org/) — Text-based diagram generation (flowcharts, sequence diagrams, Gantt charts, etc.)
+- [Pele](https://github.com/mrmartineau/pele) — Lightweight vector SVG Mermaid diagram rendering engine
 - [Prism.js](https://prismjs.com/) — Lightweight code syntax highlighting
 - [PlantUML](https://plantuml.com/) — Open-source UML diagram rendering
 

@@ -48,14 +48,14 @@ lang: zh-CN
     </div>
     <div class="feature-card">
       <div class="feature-icon">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
       </div>
       <h3 class="feature-title">{{ t.help_qs_read_title }}</h3>
       <p class="feature-desc">{{ t.help_qs_read_desc }}</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/></svg>
       </div>
       <h3 class="feature-title">{{ t.help_qs_edit_title }}</h3>
       <p class="feature-desc">{{ t.help_qs_edit_desc }}</p>
@@ -80,10 +80,13 @@ lang: zh-CN
         <tr><th>{{ t.table_shortcut }}</th><th>{{ t.table_function }}</th></tr>
       </thead>
       <tbody>
-        <tr><td><kbd>⌘O</kbd></td><td>{{ t.shortcut_open }}</td></tr>
         <tr><td><kbd>⌘N</kbd></td><td>{{ t.shortcut_new }}</td></tr>
+        <tr><td><kbd>⇧⌘N</kbd></td><td>{{ t.shortcut_new_window }}</td></tr>
+        <tr><td><kbd>⌘O</kbd></td><td>{{ t.shortcut_open }}</td></tr>
         <tr><td><kbd>⌘S</kbd></td><td>{{ t.shortcut_save }}</td></tr>
+        <tr><td><kbd>⇧⌘S</kbd></td><td>{{ t.shortcut_save_as }}</td></tr>
         <tr><td><kbd>⌥⌘E</kbd></td><td>{{ t.shortcut_pdf }}</td></tr>
+        <tr><td><kbd>⌘W</kbd></td><td>{{ t.shortcut_close }}</td></tr>
         <tr><td><kbd>⌘,</kbd></td><td>{{ t.shortcut_settings }}</td></tr>
         <tr><td><kbd>⌘\</kbd></td><td>{{ t.shortcut_sidebar }}</td></tr>
         <tr><td><kbd>⇧⌘E</kbd></td><td>{{ t.shortcut_render }}</td></tr>
@@ -96,6 +99,7 @@ lang: zh-CN
         <tr><td><kbd>⇧⌘G</kbd></td><td>{{ t.shortcut_findprev }}</td></tr>
         <tr><td><kbd>⌥⌘F</kbd></td><td>{{ t.shortcut_replace }}</td></tr>
         <tr><td><kbd>⌘P</kbd></td><td>{{ t.shortcut_command_palette }}</td></tr>
+        <tr><td><kbd>⌘?</kbd></td><td>{{ t.shortcut_help }}</td></tr>
       </tbody>
     </table>
   </div>
@@ -115,10 +119,24 @@ lang: zh-CN
     </div>
     <div class="feature-card">
       <div class="feature-icon">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+      </div>
+      <h3 class="feature-title">{{ t.feat_switch_title }}</h3>
+      <p class="feature-desc">{{ t.feat_switch_desc }}</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/></svg>
       </div>
       <h3 class="feature-title">{{ t.feat_edit_title }}</h3>
       <p class="feature-desc">{{ t.feat_edit_desc }}</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="14" height="13" rx="2" ry="2"/><path d="M8 7V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/></svg>
+      </div>
+      <h3 class="feature-title">{{ t.feat_multiwindow_title }}</h3>
+      <p class="feature-desc">{{ t.feat_multiwindow_desc }}</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">
@@ -148,9 +166,15 @@ lang: zh-CN
       <h3 class="feature-title">{{ t.feat_zoom_title }}</h3>
       <p class="feature-desc">{{ t.feat_zoom_desc }}</p>
     </div>
+    <div class="feature-card">
+      <div class="feature-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+      </div>
+      <h3 class="feature-title">{{ t.feat_command_palette_title }}</h3>
+      <p class="feature-desc">{{ t.feat_command_palette_desc }}</p>
+    </div>
   </div>
 </section>
-
 
 <!-- 主题与外观 -->
 <section id="themes" class="help-section-alt">
@@ -195,7 +219,7 @@ lang: zh-CN
   <div class="features-grid">
     <div class="feature-card">
       <div class="feature-icon">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
       </div>
       <h3 class="feature-title">{{ t.feat_mermaid_help_title }}</h3>
       <p class="feature-desc">{{ t.feat_mermaid_help_desc }}</p>
@@ -280,6 +304,14 @@ lang: zh-CN
     <details>
       <summary>{{ t.faq_system_q }}</summary>
       <p>{{ t.faq_system_a }}</p>
+    </details>
+    <details>
+      <summary>{{ t.faq_homebrew_q }}</summary>
+      <p>{{ t.faq_homebrew_a }}</p>
+    </details>
+    <details>
+      <summary>{{ t.faq_gatekeeper_q }}</summary>
+      <p>{{ t.faq_gatekeeper_a }}</p>
     </details>
     <details>
       <summary>{{ t.faq_plantuml_q }}</summary>

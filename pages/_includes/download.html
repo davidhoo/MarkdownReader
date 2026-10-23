@@ -12,6 +12,10 @@
         GitHub
       </a>
     </div>
+    <div class="download-brew">
+      <span class="download-brew-label">{{ include.t.download_brew_label | default: "Homebrew" }}</span>
+      <code class="download-brew-cmd">brew tap davidhoo/markdownreader &amp;&amp; brew install --cask markdownreader</code>
+    </div>
     <div class="download-info">
       <span>{{ include.t.download_info_require_prefix }}{{ site.app.macos_version }}{{ include.t.download_info_require_suffix }}</span>
       <span>{{ include.t.download_info_silicon }}</span>
