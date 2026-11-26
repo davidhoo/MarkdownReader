@@ -64,7 +64,7 @@ struct ContentView: View {
                 settings: settings
             ))
             .modifier(ToggleSettingsModifier())
-            .background(TrafficLightHider(bgColor: themeColors.bgSubtle))
+            .background(WindowChromeConfigurator(bgColor: themeColors.bgSubtle, appViewModel: appViewModel))
             .background(WindowCloseGuard(session: session))
             .background(KeyWindowTracker(documentViewModel: documentViewModel, session: session))
             .task {
@@ -286,13 +286,10 @@ struct SettingsSidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 顶部区域：自定义红绿灯（50px）
             HStack(spacing: 0) {
-                TrafficLightButtons()
-                    .padding(.leading, 12)
                 Spacer()
             }
-            .frame(height: 50)
+            .frame(height: NativeTrafficLightLayout.titleBarHeight)
             .background(WindowDragArea())
 
             Rectangle().fill(themeColors.border).frame(height: 1)
@@ -681,55 +678,6 @@ private struct SettingsChangeModifier: ViewModifier {
 private struct ToggleSettingsModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-    }
-}
-
-// MARK: - 隐藏红绿灯
-
-/// 通过 NSViewRepresentable 隐藏窗口红绿灯按钮
-/// viewDidMoveToWindow 在视图挂载到窗口时调用，确保能获取到 window 实例
-private struct TrafficLightHider: NSViewRepresentable {
-    let bgColor: Color
-
-    func makeNSView(context: Context) -> NSView {
-        let view = TrafficLightObserverView()
-        view.bgColor = NSColor(bgColor)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        if let observer = nsView as? TrafficLightObserverView {
-            observer.bgColor = NSColor(bgColor)
-            observer.updateWindowBackground()
-        }
-    }
-
-    private final class TrafficLightObserverView: NSView {
-        var bgColor: NSColor = .windowBackgroundColor
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard let window else { return }
-            // 隐藏红绿灯按钮
-            window.standardWindowButton(.closeButton)?.isHidden = true
-            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
-            window.standardWindowButton(.zoomButton)?.isHidden = true
-            // 确保内容延伸到标题栏区域
-            window.styleMask.insert(.fullSizeContentView)
-            window.titlebarAppearsTransparent = true
-            // 移除标题栏底部分隔线
-            window.titlebarSeparatorStyle = .none
-            // 设置窗口背景色匹配 bgSubtle
-            updateWindowBackground()
-            // 初始化 NSWindow.undoManager swizzling
-            // 替换窗口的 undoManager getter 返回 per-file UndoManager
-            NSWindow.swizzleUndoManager()
-        }
-
-        func updateWindowBackground() {
-            guard let window else { return }
-            window.backgroundColor = bgColor
-        }
     }
 }
 

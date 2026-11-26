@@ -40,11 +40,11 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部区域：自定义红绿灯 + Sidebar 隐藏按钮 + 打开按钮 + 新建文件按钮（50px）
             HStack(spacing: 0) {
-                // 自定义红绿灯按钮
-                TrafficLightButtons()
-                    .padding(.leading, 12)
+                if appViewModel.trafficLightLeadingSpace > 0 {
+                    Color.clear
+                        .frame(width: appViewModel.trafficLightLeadingSpace, height: 1)
+                }
 
                 // Sidebar 隐藏按钮
                 Button {
@@ -56,7 +56,7 @@ struct SidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .help(L10n.tr(.titleBarToggleSidebar, language: language))
-                .padding(.leading, 8)
+                .padding(.leading, appViewModel.titleBarLeadingPadding)
 
                // 打开按钮（与菜单 Cmd+O 功能一致，直接调用避免 WindowGroup 多实例重复弹窗）
                Button {
@@ -86,7 +86,7 @@ struct SidebarView: View {
 
                 Spacer()
             }
-            .frame(height: 50)
+            .frame(height: NativeTrafficLightLayout.titleBarHeight)
             .background(WindowDragArea())
 
             content
