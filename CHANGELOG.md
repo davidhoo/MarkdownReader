@@ -14,6 +14,21 @@
 - 菜单 nil target 禁用状态、PDF sheet 附着等需真实焦点环境的验证尚未覆盖（SwiftUI Commands 焦点读取无法用普通 XCTest 可靠覆盖），待补最小 UI harness
 - 双窗口/多目录/最小化/全屏/关闭最后窗口重开等人工回归矩阵未执行，需 GUI 环境验证
 
+## [2.4.12] - 2026-11-27
+
+### 修复
+
+- **自定义标题栏改用系统原生红绿灯**：移除 `TrafficLightButtons` 手绘圆形按钮与 `TrafficLightHider`，改由 `WindowChromeConfigurator` 保持系统原生关闭/最小化/缩放按钮可见并垂直居中于 50pt 标题栏，同时动态测量缩放按钮右边界以计算前导留白（全屏时收起）。窗口控制按钮自动继承 macOS 原生（含 macOS 27 Liquid Glass）尺寸、配色、焦点与悬停行为。（[#21](https://github.com/davidhoo/MarkdownReader/pull/21)，感谢 @haorui-lab）
+- **构建脚本工具链与 strip 重签名兼容**：`build-app.sh` 在 `actool` 不可用时自动探测本机 Xcode 作为 `DEVELOPER_DIR`，并在未指定 `--sign` 时对 `strip -x` 后的主程序与 Quick Look 扩展执行 ad-hoc 重签名，避免 Apple Silicon 上签名失效。
+
+### 文档
+
+- **同步 README 与项目主页内容**：更新简中 / 繁中 / English / 日本語 README 与官网特性展示、多语言帮助页及 Homebrew 安装说明。
+
+### 测试
+
+- 全部 362 个单元测试通过，新增 `WindowChromeTests`（覆盖原生红绿灯显示、50pt 标题栏居中、resize 后保持居中及每窗口全屏间距切换）；`scripts/tests/homebrew-cask-sync-test.sh` 40 项全部通过。
+
 ## [2.4.11] - 2026-10-19
 
 ### 修复
