@@ -121,6 +121,19 @@ final class AppViewModel {
     /// 是否处于全屏模式
     var isFullScreen: Bool = false
 
+    /// 系统原生红绿灯右侧边界（窗口坐标 X），由 WindowChromeConfigurator 动态测量更新。
+    var trafficLightTrailingInset: CGFloat = WindowChromeConfigurator.defaultTrailingInset
+
+    /// 标题栏左侧为系统红绿灯预留的宽度（全屏时收起为 0）。
+    var trafficLightLeadingSpace: CGFloat {
+        isFullScreen ? 0 : trafficLightTrailingInset
+    }
+
+    /// 标题栏首个功能按钮的左间距（全屏时与窗口边缘保持标准边距）。
+    var titleBarLeadingPadding: CGFloat {
+        isFullScreen ? 12 : 8
+    }
+
     // MARK: - 查找替换状态
 
     /// 查找面板是否可见

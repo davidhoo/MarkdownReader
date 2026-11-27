@@ -168,8 +168,10 @@ struct DetailView: View {
     private var titleBar: some View {
         HStack(spacing: 0) {
             if !appViewModel.isSidebarVisible {
-                TrafficLightButtons()
-                    .padding(.leading, 12)
+                if appViewModel.trafficLightLeadingSpace > 0 {
+                    Color.clear
+                        .frame(width: appViewModel.trafficLightLeadingSpace, height: 1)
+                }
 
                 Button {
                     appViewModel.toggleSidebar()
@@ -180,7 +182,7 @@ struct DetailView: View {
                 }
                 .buttonStyle(.plain)
                 .help(L10n.tr(.titleBarToggleSidebar, language: language))
-                .padding(.leading, 8)
+                .padding(.leading, appViewModel.titleBarLeadingPadding)
 
                Button {
                     // 回归修复：直接调用本窗口命令目标，不通过 FocusedValue 反查。
@@ -312,7 +314,7 @@ struct DetailView: View {
             }
             .padding(.trailing, 12)
         }
-        .frame(height: 50)
+        .frame(height: WindowChromeConfigurator.titleBarHeight)
         .background(WindowDragArea())
         .alert(L10n.tr(.fileModifiedExternallyTitle, language: language), isPresented: $showReloadAlert) {
             Button(L10n.tr(.fileModifiedExternallyReload, language: language), role: .destructive) {

@@ -12,6 +12,23 @@ APP_NAME="MarkdownReader"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
+# SwiftPM 6.4 的 swiftbuild 引擎与打包阶段依赖 Xcode 中的 actool 等工具。
+# 当系统 xcode-select 指向 CommandLineTools 时自动切换到本机 Xcode，避免调用 /usr/bin/actool 失败。
+if ! xcrun --find actool >/dev/null 2>&1; then
+    for xcode_candidate in "/Applications/Xcode.app/Contents/Developer" \
+                           /Applications/Xcode*.app/Contents/Developer; do
+        if [[ -d "$xcode_candidate" ]] && DEVELOPER_DIR="$xcode_candidate" xcrun --find actool >/dev/null 2>&1; then
+            export DEVELOPER_DIR="$xcode_candidate"
+            echo "🔧 检测到未激活 Xcode，临时使用 DEVELOPER_DIR=${DEVELOPER_DIR}"
+            break
+        fi
+    done
+fi
+if ! xcrun --find actool >/dev/null 2>&1; then
+    echo "❌ 未找到可用的 Xcode（actool 不可用）；请安装 Xcode 或执行 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    exit 1
+fi
+
 VERSION=""
 VERSION_SOURCE=""
 CONFIG="debug"
@@ -104,8 +121,13 @@ cp "${BUILD_DIR}/${APP_NAME}" "$APP_BUNDLE/Contents/MacOS/"
 
 # Strip 主二进制（去除本地符号表，保留外部符号以便动态链接）
 # 符号信息仍可通过 dSYM 获取，不影响崩溃符号化
+# 注意：Apple Silicon 上链接产物带 linker-signed ad-hoc 签名，strip 会破坏该签名导致 macOS
+# 直接拒绝/杀死进程（exit 137 / Launchd spawn failed），未指定 --sign 时需在 strip 后恢复 ad-hoc 签名。
 echo "🔪 Strip 主二进制..."
 strip -x "$APP_BUNDLE/Contents/MacOS/${APP_NAME}"
+if [[ -z "$SIGN_IDENTITY" ]]; then
+    codesign --force --sign - "$APP_BUNDLE/Contents/MacOS/${APP_NAME}"
+fi
 
 # 复制资源 bundle（Swift Package Manager 编译的资源）
 if [ -d "${BUILD_DIR}/${APP_NAME}_MarkdownReader.bundle" ]; then
@@ -257,6 +279,9 @@ if [[ ${#QL_LINK_OBJECTS[@]} -gt 0 ]]; then
         # Strip Extension 二进制（去除本地符号表）
         echo "🔪 Strip Extension 二进制..."
         strip -x "$QL_BINARY"
+        if [[ -z "$SIGN_IDENTITY" ]]; then
+            codesign --force --sign - "$QL_BINARY"
+        fi
         echo "   ✅ Extension 可执行文件已生成"
         # 验证入口点（_NSExtensionMain 是外部符号，U = undefined，来自 AppKit）
         # 验证入口点 — _NSExtensionMain 在链接后为 U（undefined external），
