@@ -86,7 +86,7 @@ struct SidebarView: View {
 
                 Spacer()
             }
-            .frame(height: NativeTrafficLightLayout.titleBarHeight)
+            .frame(height: WindowChromeConfigurator.titleBarHeight)
             .background(WindowDragArea())
 
             content

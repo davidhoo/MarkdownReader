@@ -289,7 +289,7 @@ struct SettingsSidebarView: View {
             HStack(spacing: 0) {
                 Spacer()
             }
-            .frame(height: NativeTrafficLightLayout.titleBarHeight)
+            .frame(height: WindowChromeConfigurator.titleBarHeight)
             .background(WindowDragArea())
 
             Rectangle().fill(themeColors.border).frame(height: 1)

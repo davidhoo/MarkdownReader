@@ -314,7 +314,7 @@ struct DetailView: View {
             }
             .padding(.trailing, 12)
         }
-        .frame(height: NativeTrafficLightLayout.titleBarHeight)
+        .frame(height: WindowChromeConfigurator.titleBarHeight)
         .background(WindowDragArea())
         .alert(L10n.tr(.fileModifiedExternallyTitle, language: language), isPresented: $showReloadAlert) {
             Button(L10n.tr(.fileModifiedExternallyReload, language: language), role: .destructive) {
